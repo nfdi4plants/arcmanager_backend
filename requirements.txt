@@ -1,0 +1,13 @@
+fastapi~=0.100.0
+requests~=2.31.0
+PyJWT~=2.8.0
+starlette~=0.27.0
+python-dotenv~=1.0.0
+pydantic~=2.1.1
+setuptools~=65.5.1
+cryptography~=41.0.2
+pandas~=2.0.3
+openpyxl~=3.1.2
+authlib~=1.2.1
+httpx~=0.24.1
+itsdangerous==2.1.2
