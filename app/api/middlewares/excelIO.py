@@ -3,6 +3,7 @@ from json import loads
 import numpy as np
 import os
 from pathlib import Path
+import datetime
 
 
 # reads out the given file and sends the content as json back
@@ -46,6 +47,7 @@ def writeIsaFile(
     pathName = (
         os.environ.get("BACKEND_SAVE") + location + "-" + str(repoId) + "/" + path
     )
+    identifierLocation = 5
 
     # match the correct sheet name with the given type of isa
     match type:
@@ -54,9 +56,11 @@ def writeIsaFile(
 
         case "study":
             sheetName = "Study"
+            identifierLocation = 0
 
         case "assay":
             sheetName = "Assay"
+            identifierLocation = 0
 
         case other:
             sheetName = ""
@@ -87,14 +91,15 @@ def writeIsaFile(
             .at[id, columnName]
             .replace(oldContent[x], newContent[x])
         )
-        # save the changes to the excel file
-        isaFile.to_excel(
-            pathName,
-            sheet_name=sheetName,
-            merge_cells=False,
-            index=False,
-        )
 
+    isaFile.iat[identifierLocation, 2] = datetime.date.today().strftime("%d/%m/%Y")
+    # save the changes to the excel file
+    isaFile.to_excel(
+        pathName,
+        sheet_name=sheetName,
+        merge_cells=False,
+        index=False,
+    )
     # return the fully overwritten row back (currently unused, you could return anything)
     return isaFile[id : id + 1]
 
@@ -116,11 +121,59 @@ def getIsaType(path: str):
 
 
 # currently in development; usage is to extend the investigation file everytime a new study is created
-def appendStudy(pathToInvest: str):
-    study = pd.read_excel(str(Path.cwd()) + "/app/api/middlewares/study.xlsx")
-
+async def appendStudy(pathToInvest: str, pathToStudy: str):
+    study = pd.read_excel(pathToStudy, sheet_name="Study")
+    print(study)
     invest = pd.read_excel(pathToInvest)
-
+    print(invest)
     extended = pd.concat([invest, study], ignore_index=True)
 
     print(extended)
+
+    extended.to_excel(pathToInvest, merge_cells=False, index=False)
+
+
+def getSwateSheets(path: str, type: str):
+    excelFile = pd.ExcelFile(path)
+    sheets = []
+    names = []
+    match type:
+        case "study":
+            sheetNames = excelFile.sheet_names
+
+            for x in sheetNames:
+                if x != "Study":
+                    swateSheet = pd.read_excel(path, sheet_name=x)
+                    sheets.append(loads(swateSheet.to_json(orient="split")))
+                    names.append(x)
+
+        case "assay":
+            sheetNames = excelFile.sheet_names
+
+            for x in sheetNames:
+                if x != "Assay":
+                    swateSheet = pd.read_excel(path, sheet_name=x)
+                    sheets.append(loads(swateSheet.to_json(orient="split")))
+                    names.append(x)
+    return sheets, names
+
+
+def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
+    data = {}
+    for i, entry in enumerate(tableHead):
+        data[str(entry["Type"]) + " [" + str(entry["Name"]) + "]"] = tableData[i]
+
+    df = pd.DataFrame([data])
+
+    pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + path
+
+    print(df)
+
+    with pd.ExcelWriter(
+        pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
+    ) as writer:
+        df.to_excel(writer, sheet_name=name, merge_cells=False, index=False)
+
+
+def readSheet(name: str, path: str, type: str):
+    excelFile = pd.ExcelFile(path)

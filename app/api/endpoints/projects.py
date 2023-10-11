@@ -28,6 +28,8 @@ from app.api.middlewares.excelIO import (
     getIsaType,
     writeIsaFile,
     appendStudy,
+    createSheet,
+    getSwateSheets,
 )
 
 from app.api.middlewares.oauth_authentication import *
@@ -35,6 +37,7 @@ from app.models.gitlab.projects import *
 from app.models.gitlab.arc import *
 from app.models.keycloak.access_token import *
 from app.models.gitlab.commit import *
+from app.models.swate.template import *
 
 router = APIRouter()
 
@@ -236,7 +239,7 @@ async def arc_path(id: int, request: Request, path: str):
     summary="Returns the file on the given path",
     status_code=status.HTTP_200_OK,
 )
-async def arc_file(id: int, path: str, request: Request, branch: str):
+async def arc_file(id: int, path: str, request: Request, branch="main"):
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
@@ -256,7 +259,6 @@ async def arc_file(id: int, path: str, request: Request, branch: str):
         + quote(path, safe="") + "?ref=" + branch,
         headers=header,
     )
-
     # raise error if file not found
     if not fileHead.ok:
         logging.error(
@@ -863,3 +865,248 @@ async def uploadFile(request: Request):
         + str(fileContent["path"])
     )
     return request.content
+
+
+@router.get(
+    "/getTemplates",
+    summary="Retrieve a list of swate templates",
+    status_code=status.HTTP_200_OK,
+)
+async def getTemplates():
+    # send get request to swate api requesting all templates
+    request = requests.get(
+        "https://swate.nfdi4plants.org/api/IProtocolAPIv1/getAllProtocolsWithoutXml"
+    )
+
+    # if swate is down, return error 500
+    if not request.ok:
+        logging.error(
+            "There was an error retrieving the swate templates! ERROR: "
+            + str(request.json())
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Couldn't receive swate templates",
+        )
+
+    # map the received list to the model 'Templates'
+    template_list = Templates(templates=request.json())
+
+    logging.info("Sent list of swate templates to client!")
+
+    # return the templates
+    return template_list
+
+
+@router.get(
+    "/getTemplate",
+    summary="Retrieve the specific template",
+    status_code=status.HTTP_200_OK,
+)
+async def getTemplate(id: str):
+    # wrap the desired id in an json array
+    payload = json.dumps([id])
+
+    logging.debug("Getting template with id: " + id)
+    # request the template
+    request = requests.post(
+        "https://swate.nfdi4plants.org/api/IProtocolAPIv1/getProtocolById",
+        data=payload,
+    )
+
+    # if swate is down (or the desired template somehow not available) return error 400
+    if not request.ok:
+        logging.error(
+            "There was an error retrieving the swate template with id "
+            + id
+            + " ! ERROR: "
+            + str(request.json())
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Couldn't find template with id: " + id,
+        )
+
+    # return just the buildingBlocks part of the template (rest is already known)
+    templateBlocks = request.json()["TemplateBuildingBlocks"]
+
+    logging.info("Sending template with id " + id + " to client!")
+
+    return templateBlocks
+
+
+@router.post(
+    "/getTerms",
+    summary="Retrieve Terms for the given query and parent term",
+    status_code=status.HTTP_200_OK,
+)
+async def getTerms(
+    input: str,
+    request: Request,
+    advanced=False,
+):
+    # get the body of the post request
+    requestBody = await request.body()
+
+    try:
+        content = json.loads(requestBody)
+
+        # there should be a parent name and an accession set inside of the body
+        parentName = content["parent_name"]
+        parentTermAccession = content["parent_accession"]
+
+    # if there are either the name or the accession missing, return error 400
+    except:
+        logging.warning(
+            "Client request couldn't be processed because either the parent name or accession is missing!"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Couldn't retrieve parent_term name and/or accession",
+        )
+
+    # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
+    try:
+        # if there is an extended search requested, make an advanced search call
+        if advanced == "true":
+            request = requests.post(
+                "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermsForAdvancedSearch",
+                data=json.dumps(
+                    [
+                        {
+                            "Ontologies": None,
+                            "TermName": input,
+                            "TermDefinition": "",
+                            "KeepObsolete": False,
+                        }
+                    ]
+                ),
+                timeout=10,
+            )
+            logging.debug(
+                "Getting an extended list of terms for the input '" + input + "'!"
+            )
+        else:
+            # default is an request call containing the parentTerm values
+            request = requests.post(
+                "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermSuggestionsByParentTerm",
+                data=json.dumps(
+                    [
+                        {
+                            "n": 20,
+                            "parent_term": {
+                                "Name": parentName,
+                                "TermAccession": parentTermAccession,
+                            },
+                            "query": input,
+                        }
+                    ]
+                ),
+                timeout=7,
+            )
+            logging.debug(
+                "Getting an specific list of terms for the input '"
+                + input
+                + "' with parent '"
+                + parentName
+                + "'!"
+            )
+    # if there is a timeout, respond with an error 503
+    except requests.exceptions.Timeout:
+        logging.warning("Request took to long! Sending timeout error to client...")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="No term could be found in time!",
+        )
+
+    # if there is a different kind of error, return error 400
+    except:
+        logging.error(
+            "There was an error retrieving the terms for '"
+            + input
+            + "'! ERROR: "
+            + str(request.json())
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your request couldn't be processed!",
+        )
+
+    logging.info("Sent a list of terms for '" + input + "' to client!")
+    # return the list of terms found for the given input
+    return request.json()
+
+
+@router.post(
+    "/saveTemplate",
+    summary="Update or save changes to a template",
+    status_code=status.HTTP_200_OK,
+)
+async def saveTemplate(request: Request):
+    # get the body of the post request
+    requestBody = await request.body()
+
+    try:
+        content = json.loads(requestBody)
+        data = getData(request.cookies.get("data"))
+        path = content["path"]
+        projectId = content["id"]
+        target = data["target"]
+        name = content["name"]
+
+        # there should be a parent name and an accession set inside of the body
+        templateHead = content["tableHead"]
+        templateContent = content["tableContent"]
+
+    # if there are either the name or the accession missing, return error 400
+    except:
+        logging.warning("Client request couldn't be processed, the content is missing!")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Couldn't retrieve content of table",
+        )
+    # get the file in the backend
+
+    await arc_file(projectId, path, request)
+
+    pathName = (
+        os.environ.get("BACKEND_SAVE") + target + "-" + str(projectId) + "/" + path
+    )
+
+    createSheet(templateHead, templateContent, path, projectId, target, name)
+
+    response = await commitFile(request, projectId, path, pathName)
+
+    return str(response)
+
+
+@router.get(
+    "/getSheets",
+    summary="Get the different non metadata sheets of an isa file",
+    status_code=status.HTTP_200_OK,
+)
+async def getSheets(request: Request, path: str, id, branch="main"):
+    try:
+        data = getData(request.cookies.get("data"))
+        target = getTarget(data["target"])
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+            "Content-Type": "application/json",
+        }
+    except:
+        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    await arc_file(id, path, request)
+
+    # construct path to the backend
+    pathName = (
+        os.environ.get("BACKEND_SAVE") + data["target"] + "-" + str(id) + "/" + path
+    )
+
+    sheets = getSwateSheets(pathName, getIsaType(path))
+
+    return sheets
