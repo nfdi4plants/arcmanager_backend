@@ -1038,6 +1038,75 @@ async def getTerms(
 
 
 @router.post(
+    "/getTermSuggestions",
+    summary="Retrieve Term suggestions for the given parent term",
+    status_code=status.HTTP_200_OK,
+)
+async def getTermSuggestions(request: Request):
+    # get the body of the post request
+    requestBody = await request.body()
+
+    try:
+        content = json.loads(requestBody)
+
+        # there should be a parent name and an accession set inside of the body
+        parentName = content["parent_name"]
+        parentTermAccession = content["parent_accession"]
+
+    # if there are either the name or the accession missing, return error 400
+    except:
+        logging.warning(
+            "Client request couldn't be processed because either the parent name or accession is missing!"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Couldn't retrieve parent_term name and/or accession",
+        )
+
+    # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
+    try:
+        # default is an request call containing the parentTerm values
+        request = requests.post(
+            "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getAllTermsByParentTerm",
+            data=json.dumps(
+                [
+                    {
+                        "Name": parentName,
+                        "TermAccession": parentTermAccession,
+                    }
+                ]
+            ),
+            timeout=7,
+        )
+        logging.debug(
+            "Getting list of suggestion terms for the parent '" + parentName + "'!"
+        )
+    # if there is a timeout, respond with an error 503
+    except requests.exceptions.Timeout:
+        logging.warning("Request took to long! Sending timeout error to client...")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="No terms could be found in time!",
+        )
+
+    # if there is a different kind of error, return error 400
+    except:
+        logging.error(
+            "There was an error retrieving the terms for '"
+            + parentName
+            + "'! ERROR: "
+            + str(request.json())
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your request couldn't be processed!",
+        )
+    logging.info("Sent a list of terms for '" + parentName + "' to client!")
+    # return the list of terms found for the given input
+    return request.json()
+
+
+@router.post(
     "/saveTemplate",
     summary="Update or save changes to a template",
     status_code=status.HTTP_200_OK,

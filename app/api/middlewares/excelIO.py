@@ -92,6 +92,10 @@ def writeIsaFile(
             .replace(oldContent[x], newContent[x])
         )
 
+    # if there is just one column, add a second one to make space for a date
+    if isaFile.shape[1] < 3:
+        isaFile.insert(2, "Unnamed: 2", "")
+
     isaFile.iat[identifierLocation, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
     isaFile.to_excel(
@@ -161,9 +165,12 @@ def getSwateSheets(path: str, type: str):
 def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
     data = {}
     for i, entry in enumerate(tableHead):
-        data[str(entry["Type"]) + " [" + str(entry["Name"]) + "]"] = tableData[i]
+        columnData = []
+        for cell in enumerate(tableData[i]):
+            columnData.append(cell[1])
+        data[str(entry["Type"])] = columnData
 
-    df = pd.DataFrame([data])
+    df = pd.DataFrame(data)
 
     pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + path
 
