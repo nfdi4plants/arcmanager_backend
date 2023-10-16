@@ -1169,7 +1169,7 @@ async def getSheets(request: Request, path: str, id, branch="main"):
             detail="No authorized cookie found!",
         )
 
-    await arc_file(id, path, request)
+    await arc_file(id, path, request, branch)
 
     # construct path to the backend
     pathName = (

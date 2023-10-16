@@ -11,27 +11,35 @@ def readIsaFile(path: str, type: str):
     # initiate isaFile structure
     isaFile: pd.DataFrame
 
-    # match the file to access the correct sheet
+    # match the correct sheet name with the given type of isa
     match type:
         case "investigation":
-            try:
-                isaFile = pd.read_excel(path, sheet_name="isa_investigation")
-            except:
-                isaFile = pd.read_excel(path, 0)
+            sheetName = "isa_investigation"
+
         case "study":
-            try:
-                isaFile = pd.read_excel(path, sheet_name="Study")
-            except:
-                isaFile = pd.read_excel(path, 0)
+            sheetName = "Study"
+
+            # the intended name stated in the arc specification
+            sheetName2 = "isa_study"
+
         case "assay":
-            try:
-                isaFile = pd.read_excel(path, sheet_name="Assay")
-            except:
-                isaFile = pd.read_excel(path, 0)
+            sheetName = "Assay"
+
+            # the intended name stated in the arc specification
+            sheetName2 = "isa_assay"
+        case other:
+            sheetName = sheetName2 = ""
+
+    # read the file
+    try:
+        isaFile = pd.read_excel(path, sheet_name=sheetName)
+    except:
+        try:
+            isaFile = pd.read_excel(path, sheet_name=sheetName2)
+        except:
+            isaFile = pd.read_excel(path, 0)
 
         # if none matches, just read the file with default values
-        case other:
-            isaFile = pd.read_excel(path)
 
     # parse the dataframe into json and return it
     parsed = loads(isaFile.to_json(orient="split"))
@@ -56,20 +64,29 @@ def writeIsaFile(
 
         case "study":
             sheetName = "Study"
+
+            # the intended name stated in the arc specification
+            sheetName2 = "isa_study"
             identifierLocation = 0
 
         case "assay":
             sheetName = "Assay"
+
+            # the intended name stated in the arc specification
+            sheetName2 = "isa_assay"
             identifierLocation = 0
 
         case other:
-            sheetName = ""
+            sheetName = sheetName2 = ""
 
     # read the file
     try:
         isaFile = pd.read_excel(pathName, sheet_name=sheetName)
     except:
-        isaFile = pd.read_excel(pathName, 0)
+        try:
+            isaFile = pd.read_excel(pathName, sheet_name=sheetName2)
+        except:
+            isaFile = pd.read_excel(pathName, 0)
 
     # replace nan values with empty strings
     isaFile = isaFile.fillna("")
@@ -96,6 +113,7 @@ def writeIsaFile(
     if isaFile.shape[1] < 3:
         isaFile.insert(2, "Unnamed: 2", "")
 
+    # insert the current date next to the identifier to indicate the date since the metadata was last edited
     isaFile.iat[identifierLocation, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
     isaFile.to_excel(
@@ -146,7 +164,7 @@ def getSwateSheets(path: str, type: str):
             sheetNames = excelFile.sheet_names
 
             for x in sheetNames:
-                if x != "Study":
+                if x != "Study" and x != "isa_study":
                     swateSheet = pd.read_excel(path, sheet_name=x)
                     sheets.append(loads(swateSheet.to_json(orient="split")))
                     names.append(x)
@@ -155,7 +173,7 @@ def getSwateSheets(path: str, type: str):
             sheetNames = excelFile.sheet_names
 
             for x in sheetNames:
-                if x != "Assay":
+                if x != "Assay" and x != "isa_assay":
                     swateSheet = pd.read_excel(path, sheet_name=x)
                     sheets.append(loads(swateSheet.to_json(orient="split")))
                     names.append(x)
