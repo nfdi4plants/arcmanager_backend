@@ -65,6 +65,16 @@ def getTarget(target: str):
             return "GITLAB_ADDRESS"
 
 
+async def getUserName(target: str, userId: int, access_token: str):
+    header = {"Authorization": "Bearer " + access_token}
+    userInfo = requests.get(
+        os.environ.get(getTarget(target)) + "/api/v4/users/" + str(userId),
+        headers=header,
+    ).json()
+
+    return userInfo["name"]
+
+
 # decrypt the cookie data with the corresponding public key
 def getData(cookie: str):
     # get public key from .env to decode data (in form of a byte string)

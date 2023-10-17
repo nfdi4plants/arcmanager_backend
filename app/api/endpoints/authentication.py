@@ -2,6 +2,7 @@ import json
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import RedirectResponse
 from starlette.config import Config
+from app.api.endpoints.projects import getUserName
 
 # from starlette.requests import Request
 from starlette.responses import HTMLResponse
@@ -25,21 +26,27 @@ oauth.register(
 )
 
 oauth.register(
-    name="tuebingen",
+    name="tübingen",
     server_metadata_url="https://gitlab.nfdi4plants.de/.well-known/openid-configuration",
+    client_id="f5566a7704e4e9e0b5fa3b1b603ef90a0d6ede269987fd82ffeca7475cb8b88c",
+    client_secret="4a7e106e78782117e64e6ec04a0107f6ebd79c10696f4b1ff992ead874d90fd5",
     client_kwargs={"scope": "openid profile api"},
 )
 
 oauth.register(
     name="freiburg",
-    server_metadata_url="",
-    client_kwargs={"scope": "openid email profile"},
+    server_metadata_url="https://git.nfdi4plants.org/.well-known/openid-configuration",
+    client_id="b28f5ab578608aec89be0867e3284a6c421b49abb4560fd985bea2ee29130405",
+    client_secret="cb0476093ac11cab11b352c23bc3ebc260fbbe3d510d3558be62c8ea9999998c",
+    client_kwargs={"scope": "openid profile api"},
 )
 
 oauth.register(
     name="plantmicrobe",
-    server_metadata_url="",
-    client_kwargs={"scope": "openid email profile"},
+    server_metadata_url="https://gitlab.plantmicrobe.de/.well-known/openid-configuration",
+    client_id="b74a844b1a32125a69842c66935244879adfb0e888a6db3b56ed288892de24d7",
+    client_secret="f182497b71fad82482e5989af2d3607ca7d96e47a7f6fb9f8e836460feb5905c",
+    client_kwargs={"scope": "openid api profile"},
 )
 
 
@@ -54,7 +61,7 @@ async def login(request: Request, datahub: str):
     if datahub == "dev":
         return await oauth.dev.authorize_redirect(request, redirect_uri)
     elif datahub == "tübingen":
-        return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
+        return await oauth.tübingen.authorize_redirect(request, redirect_uri)
     elif datahub == "freiburg":
         return await oauth.freiburg.authorize_redirect(request, redirect_uri)
     elif datahub == "plantmicrobe":
@@ -71,54 +78,15 @@ async def login(request: Request, datahub: str):
 async def callback(request: Request):
     # read requested datahub from user session
     datahub = request.session.get("datahub")
-    response = Response(
-        "Success",
-        media_type="text/plain",
-    )
+
     token = ""
-    test = RedirectResponse("https://localhost:5173")
+    test = RedirectResponse("http://localhost:5173")
 
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
-            access_token = token.get("access_token")
-            cookieData = {
-                "gitlab": access_token,
-                "target": datahub,
-                "token": token,
-            }
-            # read out private key from .env
-            pr_key = (
-                b"-----BEGIN RSA PRIVATE KEY-----\n"
-                + os.environ.get("PRIVATE_RSA").encode()
-                + b"\n-----END RSA PRIVATE KEY-----"
-            )
-            # encode cookie data with rsa key
-            encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
-            response.set_cookie("data", encodedCookie, httponly=True, secure=True)
-            test.set_cookie(
-                "data",
-                encodedCookie,
-                httponly=True,
-                secure=True,
-            )
-        elif datahub == "tuebingen":
-            token = await oauth.tuebingen.authorize_access_token(request)
-            access_token = token.get("access_token")
-            cookieData = {
-                "gitlab": access_token,
-                "target": datahub,
-                "token": token,
-            }
-            # read out private key from .env
-            pr_key = (
-                b"-----BEGIN RSA PRIVATE KEY-----\n"
-                + os.environ.get("PRIVATE_RSA").encode()
-                + b"\n-----END RSA PRIVATE KEY-----"
-            )
-            # encode cookie data with rsa key
-            encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
-            response.set_cookie("data", encodedCookie, httponly=True, secure=True)
+        elif datahub == "tübingen":
+            token = await oauth.tübingen.authorize_access_token(request)
         elif datahub == "freiburg":
             token = await oauth.freiburg.authorize_access_token(request)
         elif datahub == "plantmicrobe":
@@ -126,10 +94,43 @@ async def callback(request: Request):
 
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error.error}</h1>")
+
+    access_token = token.get("access_token")
+    userInfo = token.get("userinfo")["sub"]
+    cookieData = {
+        "gitlab": access_token,
+        "target": datahub,
+    }
+    # read out private key from .env
+    pr_key = (
+        b"-----BEGIN RSA PRIVATE KEY-----\n"
+        + os.environ.get("PRIVATE_RSA").encode()
+        + b"\n-----END RSA PRIVATE KEY-----"
+    )
+    # encode cookie data with rsa key
+    encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
+    request.session["data"] = encodedCookie
+    test.set_cookie(
+        "data", encodedCookie, httponly=True, secure=True, samesite="strict"
+    )
+    test.set_cookie("logged_in", "true", httponly=False)
+    test.set_cookie(
+        "username",
+        await getUserName(datahub, userInfo, access_token),
+        httponly=False,
+    )
+
+    request.session.clear()
     return test
 
 
 @router.get("/logout", summary="Manually delete server-side user session")
 async def logout(request: Request):
-    request.session.pop("user", None)
-    return "logout successful"
+    response = Response("logout successful", media_type="text/plain")
+
+    # if the user logs out, delete the "data" cookie containing the gitlab token
+    response.delete_cookie("data")
+    response.delete_cookie("logged_in")
+    response.delete_cookie("username")
+    request.cookies.clear()
+    return response
