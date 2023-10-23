@@ -21,31 +21,24 @@ oauth = OAuth(config)
 oauth.register(
     name="dev",
     server_metadata_url="https://gitdev.nfdi4plants.org/.well-known/openid-configuration",
-    client_id="2f92f5957e88abb828a215fbad2efee5627b404f10ffcf66e4354726c288aa99",
     client_kwargs={"scope": "openid profile api"},
 )
 
 oauth.register(
-    name="tübingen",
+    name="tuebingen",
     server_metadata_url="https://gitlab.nfdi4plants.de/.well-known/openid-configuration",
-    client_id="f5566a7704e4e9e0b5fa3b1b603ef90a0d6ede269987fd82ffeca7475cb8b88c",
-    client_secret="4a7e106e78782117e64e6ec04a0107f6ebd79c10696f4b1ff992ead874d90fd5",
     client_kwargs={"scope": "openid profile api"},
 )
 
 oauth.register(
     name="freiburg",
     server_metadata_url="https://git.nfdi4plants.org/.well-known/openid-configuration",
-    client_id="b28f5ab578608aec89be0867e3284a6c421b49abb4560fd985bea2ee29130405",
-    client_secret="cb0476093ac11cab11b352c23bc3ebc260fbbe3d510d3558be62c8ea9999998c",
     client_kwargs={"scope": "openid profile api"},
 )
 
 oauth.register(
     name="plantmicrobe",
     server_metadata_url="https://gitlab.plantmicrobe.de/.well-known/openid-configuration",
-    client_id="b74a844b1a32125a69842c66935244879adfb0e888a6db3b56ed288892de24d7",
-    client_secret="f182497b71fad82482e5989af2d3607ca7d96e47a7f6fb9f8e836460feb5905c",
     client_kwargs={"scope": "openid api profile"},
 )
 
@@ -61,7 +54,7 @@ async def login(request: Request, datahub: str):
     if datahub == "dev":
         return await oauth.dev.authorize_redirect(request, redirect_uri)
     elif datahub == "tübingen":
-        return await oauth.tübingen.authorize_redirect(request, redirect_uri)
+        return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
     elif datahub == "freiburg":
         return await oauth.freiburg.authorize_redirect(request, redirect_uri)
     elif datahub == "plantmicrobe":
@@ -80,13 +73,13 @@ async def callback(request: Request):
     datahub = request.session.get("datahub")
 
     token = ""
-    test = RedirectResponse("http://localhost:5173")
+    response = RedirectResponse("http://localhost:5173")
 
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
         elif datahub == "tübingen":
-            token = await oauth.tübingen.authorize_access_token(request)
+            token = await oauth.tuebingen.authorize_access_token(request)
         elif datahub == "freiburg":
             token = await oauth.freiburg.authorize_access_token(request)
         elif datahub == "plantmicrobe":
@@ -110,18 +103,18 @@ async def callback(request: Request):
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
-    test.set_cookie(
+    response.set_cookie(
         "data", encodedCookie, httponly=True, secure=True, samesite="strict"
     )
-    test.set_cookie("logged_in", "true", httponly=False)
-    test.set_cookie(
+    response.set_cookie("logged_in", "true", httponly=False)
+    response.set_cookie(
         "username",
         await getUserName(datahub, userInfo, access_token),
         httponly=False,
     )
 
     request.session.clear()
-    return test
+    return response
 
 
 @router.get("/logout", summary="Manually delete server-side user session")

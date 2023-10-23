@@ -1161,7 +1161,7 @@ async def saveTemplate(request: Request):
 
 @router.get(
     "/getSheets",
-    summary="Get the different non metadata sheets of an isa file",
+    summary="Get the different annotation metadata sheets of an isa file",
     status_code=status.HTTP_200_OK,
 )
 async def getSheets(request: Request, path: str, id, branch="main"):

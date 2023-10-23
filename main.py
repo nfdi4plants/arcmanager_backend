@@ -16,7 +16,12 @@ app = FastAPI(
 load_dotenv()
 
 # valid frontend url origins
-origins = ["https://localhost:5173", "https://localhost:4173", "http://localhost:5173"]
+origins = [
+    "https://localhost:5173",
+    "https://localhost:4173",
+    "http://localhost:5173",
+    "http://localhost:4173",
+]
 
 
 app.add_middleware(
