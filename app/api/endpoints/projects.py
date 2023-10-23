@@ -65,6 +65,16 @@ def getTarget(target: str):
             return "GITLAB_ADDRESS"
 
 
+async def getUserName(target: str, userId: int, access_token: str):
+    header = {"Authorization": "Bearer " + access_token}
+    userInfo = requests.get(
+        os.environ.get(getTarget(target)) + "/api/v4/users/" + str(userId),
+        headers=header,
+    ).json()
+
+    return userInfo["name"]
+
+
 # decrypt the cookie data with the corresponding public key
 def getData(cookie: str):
     # get public key from .env to decode data (in form of a byte string)
@@ -1151,7 +1161,7 @@ async def saveTemplate(request: Request):
 
 @router.get(
     "/getSheets",
-    summary="Get the different non metadata sheets of an isa file",
+    summary="Get the different annotation metadata sheets of an isa file",
     status_code=status.HTTP_200_OK,
 )
 async def getSheets(request: Request, path: str, id, branch="main"):
