@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
-from uuid import uuid4
 
 app = FastAPI(
     docs_url="/arcmanager/api/v1/docs", openapi_url="/arcmanager/api/v1/openapi.json"
@@ -32,8 +31,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-app.add_middleware(SessionMiddleware, secret_key=str(uuid4()), max_age=None)
+# secret key has to be static or else there will be mismatching states between the workers (https://stackoverflow.com/questions/61922045/mismatchingstateerror-mismatching-state-csrf-warning-state-not-equal-in-reque)
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY"), max_age=None)
 
 """
 @app.middleware("http")
