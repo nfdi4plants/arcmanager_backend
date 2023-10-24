@@ -522,80 +522,64 @@ async def createArc(
     newArcJson = projectPost.json()
     logging.info("Created Arc with Id: " + str(newArcJson["id"]))
 
-    pathName = (
-        os.environ.get("BACKEND_SAVE") + data["target"] + "-" + str(newArcJson["id"])
-    )
-    # create directory for the file to save it, skip if it exists already
-    os.makedirs(pathName, exist_ok=True)
-
-    # create the arc structure in the newly created repo
-    os.chdir(pathName)
-    try:
-        arc = os.popen("arc init")
-        output = arc.read()
-    except:
-        print("An error creating the arc structure occurred")
-        if output:
-            logging.error("Couldn't create arc with arccommander! " + output)
-        else:
-            logging.error("Couldn't create arc with arccommander!")
-
-        raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Couldn't create arc with arccommander",
-        )
-
     # replace empty space with underscores (arccommander can't process spaces in strings)
     investIdentifier = investIdentifier.replace(" ", "_")
-    try:
-        invest = os.popen("arc i create -i " + investIdentifier)
-        outputInv = invest.read()
-    except:
-        print("An error creating the investigation file occurred")
-        if outputInv:
-            logging.error("Couldn't create investigation file! " + outputInv)
-        else:
-            logging.error("couldn't create investigation file")
-
-        raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Couldn't create investigation file with arccommander",
-        )
-
-    logging.debug("created arc and investigation file")
 
     ## commit the folders and the investigation isa to the repo
     arcData = []
-    folders = os.listdir()
-    # fill the payload with all the files and folders
-    for i in range(len(folders)):
-        match folders[i]:
-            case "isa.investigation.xlsx":
-                arcData.append(
-                    {
-                        "action": "create",
-                        "file_path": "isa.investigation.xlsx",
-                        "content": base64.b64encode(
-                            open(pathName + "/isa.investigation.xlsx", "rb").read()
-                        ).decode("utf-8"),
-                        "encoding": "base64",
-                    }
-                )
-            # we ignore any readme files
-            case "README.md":
-                continue
-            # we also ignore the hidden .git folder created by the arccommander
-            case ".git":
-                continue
 
-            case other:
-                arcData.append(
-                    {
-                        "action": "create",
-                        "file_path": folders[i] + "/.gitkeep",
-                        "content": None,
-                    }
-                )
+    # fill the payload with all the files and folders
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "isa.investigation.xlsx",
+            "content": base64.b64encode(
+                open(
+                    os.environ.get("BACKEND_SAVE")
+                    + "/isa_files"
+                    + "/isa.investigation.xlsx",
+                    "rb",
+                ).read()
+            ).decode("utf-8"),
+            "encoding": "base64",
+        }
+    )
+
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": ".arc/.gitkeep",
+            "content": None,
+        }
+    )
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "assays/.gitkeep",
+            "content": None,
+        }
+    )
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "runs/.gitkeep",
+            "content": None,
+        }
+    )
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "studies/.gitkeep",
+            "content": None,
+        }
+    )
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "workflows/.gitkeep",
+            "content": None,
+        }
+    )
     # wrap the payload into json
     payload = json.dumps(
         {
@@ -625,11 +609,30 @@ async def createArc(
             + str(commitRequest.content),
         )
 
-    # print(commitRequest.json())
-    # TODO remove the arc structure to save space
-    # shutil.rmtree(pathName)
-
     logging.info("Created new ARC with ID: " + str(newArcJson["id"]))
+
+    # write identifier into investigation file
+    await arc_file(id=newArcJson["id"], path="isa.investigation.xlsx", request=request, branch=newArcJson["default_branch"])
+    writeIsaFile(
+        path="isa.investigation.xlsx",
+        type="investigation",
+        id=5,
+        oldContent=["Investigation Identifier"],
+        newContent=["Investigation Identifier", investIdentifier],
+        repoId=newArcJson["id"],
+        location=data["target"],
+    )
+    await commitFile(
+        request=request,
+        id=newArcJson["id"],
+        repoPath="isa.investigation.xlsx",
+        filePath=os.environ.get("BACKEND_SAVE")
+        + data["target"]
+        + "-"
+        + str(newArcJson["id"])
+        + "/isa.investigation.xlsx", branch=newArcJson["default_branch"]
+    )
+
     return [projectPost.content, commitRequest.content]
 
 
