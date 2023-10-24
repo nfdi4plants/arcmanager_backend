@@ -47,9 +47,8 @@ oauth.register(
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
     # redirect_uri = request.url_for("callback")
-    redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback"
-    # store requested datahub in user session
-    request.session["datahub"] = datahub
+    redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub="+datahub
+
     # construct authorization url for requested datahub and redirect
     if datahub == "dev":
         return await oauth.dev.authorize_redirect(request, redirect_uri)
@@ -68,11 +67,8 @@ async def login(request: Request, datahub: str):
     "/callback",
     summary="Redirection after successful user login and creation of server-side user session",
 )
-async def callback(request: Request):
-    # read requested datahub from user session
-    datahub = request.session.get("datahub")
+async def callback(request: Request, datahub:str):
 
-    token = ""
     # response = RedirectResponse("http://localhost:5173")
     response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
 
@@ -87,8 +83,8 @@ async def callback(request: Request):
             token = await oauth.plantmicrobe.authorize_access_token(request)
 
     except OAuthError as error:
-        return HTMLResponse(f"<h1>{error.error}</h1>")
-
+        return HTMLResponse(f"<h1>{error.error}</h1>") 
+    
     try:
         access_token = token.get("access_token")
     except:
