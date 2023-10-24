@@ -20,6 +20,7 @@ origins = [
     "https://localhost:4173",
     "http://localhost:5173",
     "http://localhost:4173",
+    "https://nfdi4plants.de/arcmanager/app/index.html"
 ]
 
 

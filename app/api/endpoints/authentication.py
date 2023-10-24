@@ -46,13 +46,15 @@ oauth.register(
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    # redirect_uri = request.url_for("callback")
+    
     redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub="+datahub
     
     # construct authorization url for requested datahub and redirect
     if datahub == "dev":
         return await oauth.dev.authorize_redirect(request, redirect_uri)
     elif datahub == "tübingen":
+        # change uri with 'ü' replaced
+        redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
         return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
     elif datahub == "freiburg":
         return await oauth.freiburg.authorize_redirect(request, redirect_uri)
@@ -75,7 +77,7 @@ async def callback(request: Request, datahub:str):
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
-        elif datahub == "tübingen":
+        elif datahub == "tuebingen":
             token = await oauth.tuebingen.authorize_access_token(request)
         elif datahub == "freiburg":
             token = await oauth.freiburg.authorize_access_token(request)
@@ -89,6 +91,7 @@ async def callback(request: Request, datahub:str):
         access_token = token.get("access_token")
     except:
         raise OAuthError(description="Failed retrieving the token data")
+   
     userInfo = token.get("userinfo")["sub"]
     cookieData = {
         "gitlab": access_token,

@@ -61,6 +61,8 @@ def getTarget(target: str):
             return "GITLAB_TUEBINGEN"
         case "plantmicrobe":
             return "GITLAB_PLANTMICROBE"
+        case "tuebingen":
+            return "GITLAB_TUEBINGEN"
         case other:
             return "GITLAB_ADDRESS"
 
@@ -150,6 +152,8 @@ async def public_arcs(target: str):
     request = requests.get(os.environ.get(target) + "/api/v4/projects?per_page=1000")
 
     project_list = Projects(projects=request.json())
+
+    logging.debug("Sent public list of ARCs")
 
     return project_list
 
