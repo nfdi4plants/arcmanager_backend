@@ -46,8 +46,8 @@ oauth.register(
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    redirect_uri = request.url_for("callback")
-    # redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback"
+    # redirect_uri = request.url_for("callback")
+    redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback"
     # store requested datahub in user session
     request.session["datahub"] = datahub
     # construct authorization url for requested datahub and redirect
@@ -73,7 +73,8 @@ async def callback(request: Request):
     datahub = request.session.get("datahub")
 
     token = ""
-    response = RedirectResponse("http://localhost:5173")
+    # response = RedirectResponse("http://localhost:5173")
+    response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
 
     try:
         if datahub == "dev":
@@ -88,7 +89,10 @@ async def callback(request: Request):
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error.error}</h1>")
 
-    access_token = token.get("access_token")
+    try:
+        access_token = token.get("access_token")
+    except:
+        raise OAuthError(description="Failed retrieving the token data")
     userInfo = token.get("userinfo")["sub"]
     cookieData = {
         "gitlab": access_token,
@@ -100,6 +104,7 @@ async def callback(request: Request):
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
+
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie

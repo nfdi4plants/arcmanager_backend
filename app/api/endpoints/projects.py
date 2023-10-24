@@ -318,14 +318,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         # read out isa file and create json
         fileJson = readIsaFile(pathName, getIsaType(path))
 
-        logging.info(
-            "Sent ISA file "
-            + path
-            + " from ID: "
-            + str(id)
-            + " to "
-            + request.client.host
-        )
+        logging.info("Sent ISA file " + path + " from ID: " + str(id))
 
         return fileJson["data"]
     # if its not a isa file, return the default metadata of the file to the frontend
@@ -341,14 +334,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
             + branch,
             headers=header,
         )
-        logging.info(
-            "Sent info of "
-            + path
-            + " from ID: "
-            + str(id)
-            + " to "
-            + request.client.host
-        )
+        logging.info("Sent info of " + path + " from ID: " + str(id))
         return arcFile.json()
 
 
@@ -431,7 +417,8 @@ async def commitFile(
     requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
-        fileContent = json.loads(requestBody)
+        if filePath == "":
+            fileContent = json.loads(requestBody)
         targetRepo = data["target"]
 
     except:
@@ -670,123 +657,70 @@ async def createIsa(
             status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
         )
 
-    pathName = os.environ.get("BACKEND_SAVE") + data["target"] + "-" + str(id)
-    # create directory for the file to save it, skip if it exists already
-    os.makedirs(pathName, exist_ok=True)
-
-    os.chdir(pathName)
-
     identifier = identifier.replace(" ", "_")
-
-    match type:
-        case "studies":
-            try:
-                study = os.popen("arc study init --identifier " + identifier)
-                # wait until the arccommander is finished
-                studyOut = study.read()
-                logging.debug(
-                    "created new study file " + identifier + " on " + pathName
-                )
-                pathName = pathName + "/studies/" + identifier
-            except:
-                if studyOut:
-                    logging.error(
-                        "Couldn't create study with arccommander! " + studyOut
-                    )
-                else:
-                    logging.error("Couldn't create study with arccommander!")
-
-                raise HTTPException(
-                    status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Couldn't create study structure with arccommander",
-                )
-
-        case "assays":
-            try:
-                assay = os.popen("arc assay init -a " + identifier)
-                # wait until the arccommander is finished
-                assayOut = assay.read()
-                logging.debug(
-                    "created new assay file " + identifier + " on " + pathName
-                )
-                pathName = pathName + "/assays/" + identifier
-            except:
-                if assayOut:
-                    logging.error(
-                        "Couldn't create assay with arccommander! " + assayOut
-                    )
-                else:
-                    logging.error("Couldn't create assay with arccommander!")
-
-                raise HTTPException(
-                    status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Couldn't create assay structure with arccommander",
-                )
-
-        case other:
-            logging.error("can only create ISA of type study or assay, not " + type)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Type not found, can only create study or assay file",
-            )
 
     ## commit the folders and the investigation isa to the repo
     isaData = []
 
-    os.chdir(pathName)
-    folders = os.listdir()
-    # fill the payload with all the files and folders
-    for i in range(len(folders)):
-        match folders[i]:
-            case "isa.study.xlsx":
-                isaData.append(
-                    {
-                        "action": "create",
-                        "file_path": type + "/" + identifier + "/isa.study.xlsx",
-                        "content": base64.b64encode(
-                            open(pathName + "/isa.study.xlsx", "rb").read()
-                        ).decode("utf-8"),
-                        "encoding": "base64",
-                    }
-                )
+    match type:
+        case "studies":
+            isaData.append(
+                {
+                    "action": "create",
+                    "file_path": type + "/" + identifier + "/isa.study.xlsx",
+                    "content": base64.b64encode(
+                        open(
+                            os.environ.get("BACKEND_SAVE")
+                            + "/isa_files"
+                            + "/isa.study.xlsx",
+                            "rb",
+                        ).read()
+                    ).decode("utf-8"),
+                    "encoding": "base64",
+                }
+            )
 
-            case "isa.assay.xlsx":
-                isaData.append(
-                    {
-                        "action": "create",
-                        "file_path": type + "/" + identifier + "/isa.assay.xlsx",
-                        "content": base64.b64encode(
-                            open(pathName + "/isa.assay.xlsx", "rb").read()
-                        ).decode("utf-8"),
-                        "encoding": "base64",
-                    }
-                )
+        case "assays":
+            isaData.append(
+                {
+                    "action": "create",
+                    "file_path": type + "/" + identifier + "/isa.assay.xlsx",
+                    "content": base64.b64encode(
+                        open(
+                            os.environ.get("BACKEND_SAVE")
+                            + "/isa_files"
+                            + "/isa.assay.xlsx",
+                            "rb",
+                        ).read()
+                    ).decode("utf-8"),
+                    "encoding": "base64",
+                }
+            )
 
-            case "README.md":
-                isaData.append(
-                    {
-                        "action": "create",
-                        "file_path": type + "/" + identifier + "/README.md",
-                        "content": base64.b64encode(
-                            open(pathName + "/README.md", "rb").read()
-                        ).decode("utf-8"),
-                        "encoding": "base64",
-                    }
-                )
-            # if its a folder, create the folder with a .gitkeep file
-            case other:
-                isaData.append(
-                    {
-                        "action": "create",
-                        "file_path": type
-                        + "/"
-                        + identifier
-                        + "/"
-                        + folders[i]
-                        + "/.gitkeep",
-                        "content": None,
-                    }
-                )
+    isaData.append(
+        {
+            "action": "create",
+            "file_path": type + "/" + identifier + "/README.md",
+            "content": None,
+            "encoding": "base64",
+        }
+    )
+
+    isaData.append(
+        {
+            "action": "create",
+            "file_path": type + "/" + identifier + "/" + "protocols" + "/.gitkeep",
+            "content": None,
+        }
+    )
+    isaData.append(
+        {
+            "action": "create",
+            "file_path": type + "/" + identifier + "/" + "resources" + "/.gitkeep",
+            "content": None,
+        }
+    )
+
     # wrap the payload into json
     payload = json.dumps(
         {
@@ -813,6 +747,72 @@ async def createIsa(
         )
 
     logging.info("Created " + identifier + " in " + type + " for ARC " + str(id))
+
+    # write identifier into file
+    pathName = ""
+    match type:
+        case "studies":
+            pathName = type + "/" + identifier + "/isa.study.xlsx"
+            await arc_file(
+                id,
+                path=pathName,
+                branch=branch,
+                request=request,
+            )
+            writeIsaFile(
+                path=pathName,
+                type="study",
+                id=0,
+                oldContent=["Study Identifier"],
+                newContent=["Study Identifier", identifier],
+                repoId=id,
+                location=data["target"],
+            )
+        case "assays":
+            pathName = type + "/" + identifier + "/isa.assay.xlsx"
+            await arc_file(
+                id,
+                path=pathName,
+                branch=branch,
+                request=request,
+            )
+            writeIsaFile(
+                path=pathName,
+                type="assay",
+                id=0,
+                oldContent=["Measurement Type"],
+                newContent=["Measurement Type", identifier],
+                repoId=id,
+                location=data["target"],
+            )
+            # edit file Name field
+            writeIsaFile(
+                path=pathName,
+                type="assay",
+                id=7,
+                oldContent=["File Name", "", ""],
+                newContent=["File Name", identifier + "/isa.assay.xlsx", ""],
+                repoId=id,
+                location=data["target"],
+            )
+        case other:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot create isa of type " + type,
+            )
+
+    await commitFile(
+        request=request,
+        id=id,
+        repoPath=pathName,
+        filePath=os.environ.get("BACKEND_SAVE")
+        + data["target"]
+        + "-"
+        + str(id)
+        + "/"
+        + pathName,
+    )
+
     return commitRequest.content
 
 
