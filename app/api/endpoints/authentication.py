@@ -125,7 +125,7 @@ async def callback(request: Request, datahub:str):
 async def logout(request: Request):
     response = Response("logout successful", media_type="text/plain")
 
-    # if the user logs out, delete the "data" cookie containing the gitlab token
+    # if the user logs out, delete the "data" cookie containing the gitlab token, as well as the other cookies set
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")

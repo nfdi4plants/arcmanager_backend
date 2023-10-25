@@ -151,6 +151,9 @@ async def public_arcs(target: str):
 
     request = requests.get(os.environ.get(target) + "/api/v4/projects?per_page=1000")
 
+    if not request.ok:
+        raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail="Error retrieving the arcs! ERROR: "+str(request.content))
+
     project_list = Projects(projects=request.json())
 
     logging.debug("Sent public list of ARCs")
