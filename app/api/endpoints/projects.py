@@ -14,7 +14,7 @@ from fastapi.encoders import jsonable_encoder
 # gitlab api commits need base64 encoded content
 import base64
 
-import shutil
+import datetime
 import jwt
 
 import logging
@@ -152,7 +152,10 @@ async def public_arcs(target: str):
     request = requests.get(os.environ.get(target) + "/api/v4/projects?per_page=1000")
 
     if not request.ok:
-        raise HTTPException(status_code=HTTP_500_INTERNAL_SERVER_ERROR, detail="Error retrieving the arcs! ERROR: "+str(request.content))
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving the arcs! ERROR: " + str(request.content),
+        )
 
     project_list = Projects(projects=request.json())
 
@@ -365,8 +368,8 @@ async def saveFile(request: Request):
         )
 
     logging.debug("Content of isa file change: " + str(isaContent))
-    # write the content to the isa file
-    writeIsaFile(
+    # write the content to the isa file and get the name of the edited row
+    rowName = writeIsaFile(
         isaContent["isaPath"],
         getIsaType(isaContent["isaPath"]),
         isaContent["rowId"],
@@ -394,6 +397,7 @@ async def saveFile(request: Request):
             isaContent["isaPath"],
             pathName,
             isaContent["arcBranch"],
+            rowName,
         )
     except:
         logging.warning(
@@ -415,11 +419,7 @@ async def saveFile(request: Request):
 @router.post("/commitFile", summary="Update the content of the file on the repo")
 # sends the http PUT request to the git to commit the file on the given filepath
 async def commitFile(
-    request: Request,
-    id: int,
-    repoPath,
-    filePath="",
-    branch="main",
+    request: Request, id: int, repoPath, filePath="", branch="main", message=""
 ):
     requestBody = await request.body()
     try:
@@ -439,6 +439,12 @@ async def commitFile(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
+    commitMessage = "Updated " + repoPath
+
+    if message != "":
+        commitMessage += ", changed " + message
+
+    trackChanges(commitMessage, id, targetRepo)
     header = {
         "Authorization": "Bearer " + data["gitlab"],
         "Content-Type": "application/json",
@@ -449,7 +455,7 @@ async def commitFile(
             "branch": branch,
             # base64 encoding of the isa file
             "content": base64.b64encode(open(filePath, "rb").read()).decode("utf-8"),
-            "commit_message": "Updated " + repoPath,
+            "commit_message": commitMessage,
             "encoding": "base64",
         }
     else:
@@ -459,7 +465,7 @@ async def commitFile(
                 "utf-8"
             ),
             "encoding": "base64",
-            "commit_message": "Updated " + repoPath,
+            "commit_message": commitMessage,
         }
 
     request = requests.put(
@@ -480,6 +486,15 @@ async def commitFile(
         )
     logging.info("Updated file on path: " + str(repoPath))
     return request.content
+
+
+def trackChanges(message: str, id: int, target: str):
+    path = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/changes.txt"
+
+    with open(path, "a+") as reader:
+        reader.write(
+            datetime.date.today().strftime("%d/%m/%Y") + " : " + message + "\n"
+        )
 
 
 # creates a new project in the repo with a readme file; we then initialize the repo folder on the server with the new id of the ARC;
@@ -536,6 +551,8 @@ async def createArc(
     arcData = []
 
     # fill the payload with all the files and folders
+
+    # isa investigation
     arcData.append(
         {
             "action": "create",
@@ -552,6 +569,7 @@ async def createArc(
         }
     )
 
+    # .arc folder
     arcData.append(
         {
             "action": "create",
@@ -559,6 +577,7 @@ async def createArc(
             "content": None,
         }
     )
+    # assays
     arcData.append(
         {
             "action": "create",
@@ -566,6 +585,8 @@ async def createArc(
             "content": None,
         }
     )
+
+    # runs
     arcData.append(
         {
             "action": "create",
@@ -573,6 +594,8 @@ async def createArc(
             "content": None,
         }
     )
+
+    # studies
     arcData.append(
         {
             "action": "create",
@@ -580,10 +603,21 @@ async def createArc(
             "content": None,
         }
     )
+
+    # workflows
     arcData.append(
         {
             "action": "create",
             "file_path": "workflows/.gitkeep",
+            "content": None,
+        }
+    )
+
+    # the arc.cwl
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "arc.cwl",
             "content": None,
         }
     )
@@ -619,7 +653,12 @@ async def createArc(
     logging.info("Created new ARC with ID: " + str(newArcJson["id"]))
 
     # write identifier into investigation file
-    await arc_file(id=newArcJson["id"], path="isa.investigation.xlsx", request=request, branch=newArcJson["default_branch"])
+    await arc_file(
+        id=newArcJson["id"],
+        path="isa.investigation.xlsx",
+        request=request,
+        branch=newArcJson["default_branch"],
+    )
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
@@ -637,7 +676,8 @@ async def createArc(
         + data["target"]
         + "-"
         + str(newArcJson["id"])
-        + "/isa.investigation.xlsx", branch=newArcJson["default_branch"]
+        + "/isa.investigation.xlsx",
+        branch=newArcJson["default_branch"],
     )
 
     return [projectPost.content, commitRequest.content]

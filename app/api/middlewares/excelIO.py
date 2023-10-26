@@ -122,8 +122,8 @@ def writeIsaFile(
         merge_cells=False,
         index=False,
     )
-    # return the fully overwritten row back (currently unused, you could return anything)
-    return isaFile[id : id + 1]
+    # return the name of the row back
+    return isaFile.iat[id, 0]
 
 
 # help function to figure out what isa file we are editing (for the sheet name)
