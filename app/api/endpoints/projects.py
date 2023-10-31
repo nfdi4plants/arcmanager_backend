@@ -1239,3 +1239,34 @@ async def getSheets(request: Request, path: str, id, branch="main"):
     sheets = getSwateSheets(pathName, getIsaType(path))
 
     return sheets
+
+
+@router.get(
+    "/getChanges",
+    summary="Get tracked changes of the ARC",
+    status_code=status.HTTP_200_OK,
+)
+async def getChanges(request: Request, id: int):
+    try:
+        data = getData(request.cookies.get("data"))
+        target = data["target"]
+        # request arc info to test valid authentication
+        await arc_tree(id=id, request=request)
+    except:
+        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/changes.txt"
+    try:
+        file = open(pathName, "r")
+        text = file.read()
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No tracked changes found!"
+        )
+
+    response = Response(content=text, headers={"Content-Type": "text/plain"})
+    return response

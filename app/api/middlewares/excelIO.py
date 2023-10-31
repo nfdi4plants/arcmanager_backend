@@ -116,12 +116,11 @@ def writeIsaFile(
     # insert the current date next to the identifier to indicate the date since the metadata was last edited
     isaFile.iat[identifierLocation, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
-    isaFile.to_excel(
-        pathName,
-        sheet_name=sheetName,
-        merge_cells=False,
-        index=False,
-    )
+    with pd.ExcelWriter(
+        pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
+    ) as writer:
+        isaFile.to_excel(writer, sheet_name=sheetName, merge_cells=False, index=False)
+
     # return the name of the row back
     return isaFile.iat[id, 0]
 

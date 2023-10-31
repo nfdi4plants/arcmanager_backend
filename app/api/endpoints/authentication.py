@@ -46,20 +46,25 @@ oauth.register(
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    
-    redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub="+datahub
-    
+    redirect_uri = (
+        "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    )
+
     # construct authorization url for requested datahub and redirect
     if datahub == "dev":
         return await oauth.dev.authorize_redirect(request, redirect_uri)
     elif datahub == "tübingen":
-        # change uri with 'ü' replaced
-        redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+        # change uri with 'ü' to 'ue'
+        redirect_uri = (
+            "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+        )
         return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
     elif datahub == "freiburg":
         return await oauth.freiburg.authorize_redirect(request, redirect_uri)
     elif datahub == "plantmicrobe":
         return await oauth.plantmicrobe.authorize_redirect(request, redirect_uri)
+    elif datahub == "tuebingen":
+        return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
     else:
         return "invalid DataHUB selection"
 
@@ -69,8 +74,7 @@ async def login(request: Request, datahub: str):
     "/callback",
     summary="Redirection after successful user login and creation of server-side user session",
 )
-async def callback(request: Request, datahub:str):
-
+async def callback(request: Request, datahub: str):
     # response = RedirectResponse("http://localhost:5173")
     response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
 
@@ -85,13 +89,13 @@ async def callback(request: Request, datahub:str):
             token = await oauth.plantmicrobe.authorize_access_token(request)
 
     except OAuthError as error:
-        return HTMLResponse(f"<h1>{error}</h1>") 
-    
+        return HTMLResponse(f"<h1>{error}</h1>")
+
     try:
         access_token = token.get("access_token")
     except:
         raise OAuthError(description="Failed retrieving the token data")
-   
+
     userInfo = token.get("userinfo")["sub"]
     cookieData = {
         "gitlab": access_token,
