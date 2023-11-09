@@ -151,7 +151,16 @@ async def public_arcs(target: str):
             status_code=status.HTTP_404_NOT_FOUND, detail="Target git not found!"
         )
 
-    request = requests.get(os.environ.get(target) + "/api/v4/projects?per_page=1000")
+    try:
+        # if the requested gitlab is not available after 30s, return error 504
+        request = requests.get(
+            os.environ.get(target) + "/api/v4/projects?per_page=1000", timeout=30
+        )
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="DataHUB currently not available!!",
+        )
 
     if not request.ok:
         raise HTTPException(
