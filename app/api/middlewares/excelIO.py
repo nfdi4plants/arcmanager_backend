@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import datetime
 from fastapi import HTTPException
+import openpyxl
 
 
 # reads out the given file and sends the content as json back
@@ -85,8 +86,10 @@ def writeIsaFile(
         isaFile = pd.read_excel(pathName, sheet_name=sheetName)
     except:
         try:
+            sheetName = sheetName2
             isaFile = pd.read_excel(pathName, sheet_name=sheetName2)
         except:
+            sheetName = 0
             isaFile = pd.read_excel(pathName, 0)
 
     # replace nan values with empty strings
@@ -173,6 +176,7 @@ def getSwateSheets(path: str, type: str):
 # fill a new table column wise with the given data and safe it to the excel file
 def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
     data = {}
+
     # loop column by column
     for i, entry in enumerate(tableHead):
         columnData = []
@@ -189,7 +193,23 @@ def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
     with pd.ExcelWriter(
         pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
     ) as writer:
-        df.to_excel(writer, sheet_name=name, merge_cells=False, index=False)
+        df.to_excel(writer, sheet_name=name, index=False)
+
+    wb = openpyxl.load_workbook(filename=pathName)
+    tab = openpyxl.worksheet.table.Table(
+        displayName="annotationTable" + name,
+        ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+    )
+    style = openpyxl.worksheet.table.TableStyleInfo(
+        name="TableStyleMedium11",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=True,
+    )
+    tab.tableStyleInfo = style
+    wb[name].add_table(tab)
+    wb.save(pathName)
 
 
 # when you sync an assay to a study, either overwrite existing data or append new data

@@ -46,7 +46,9 @@ oauth.register(
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    # redirect_uri = "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    # redirect_uri = (
+    #    "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    # )
     redirect_uri = (
         "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
     )
@@ -127,6 +129,8 @@ async def callback(request: Request, datahub: str):
         await getUserName(datahub, userInfo, access_token),
         httponly=False,
     )
+    # delete any leftover error cookie
+    response.delete_cookie("error")
 
     request.session.clear()
     return response

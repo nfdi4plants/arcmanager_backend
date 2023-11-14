@@ -1209,11 +1209,11 @@ async def getTermSuggestions(request: Request):
 
 
 @router.post(
-    "/saveTemplate",
-    summary="Update or save changes to a template",
+    "/saveSheet",
+    summary="Update or save changes to a sheet",
     status_code=status.HTTP_200_OK,
 )
-async def saveTemplate(request: Request):
+async def saveSheet(request: Request):
     # get the body of the post request
     requestBody = await request.body()
 
@@ -1247,7 +1247,7 @@ async def saveTemplate(request: Request):
     createSheet(templateHead, templateContent, path, projectId, target, name)
 
     # send the edited file back to gitlab
-    response = await commitFile(request, projectId, path, pathName)
+    response = await commitFile(request, projectId, path, pathName, message=name)
 
     return str(response)
 
