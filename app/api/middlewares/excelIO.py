@@ -175,7 +175,8 @@ def getSwateSheets(path: str, type: str):
 
 # fill a new table column wise with the given data and safe it to the excel file
 def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
-    data = {}
+    head = []
+    content = []
 
     # loop column by column
     for i, entry in enumerate(tableHead):
@@ -183,9 +184,15 @@ def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
         # loop row by row
         for cell in enumerate(tableData[i]):
             columnData.append(cell[1])
-        data[str(entry["Type"])] = columnData
 
-    df = pd.DataFrame(data)
+        head.append(str(entry["Type"]))
+        content.append(columnData)
+    df = pd.DataFrame({head[0]: content[0]})
+    head.pop(0)
+    content.pop(0)
+
+    for i, entry in enumerate(head):
+        df.insert(i + 1, entry, content[i], allow_duplicates=True)
 
     pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + path
 

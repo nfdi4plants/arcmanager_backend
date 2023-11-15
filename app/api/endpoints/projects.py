@@ -361,7 +361,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
 
 
 # reads out the content of the post request body; writes the content to the corresponding isa file on the storage
-@router.post("/saveFile", summary="Write isa/overwrite isa file to backend storage")
+@router.put("/saveFile", summary="Write isa/overwrite isa file to backend storage")
 async def saveFile(request: Request):
     requestBody = await request.body()
     try:
@@ -1037,36 +1037,18 @@ async def getTemplate(id: str):
     return templateBlocks
 
 
-@router.post(
+@router.get(
     "/getTerms",
     summary="Retrieve Terms for the given query and parent term",
     status_code=status.HTTP_200_OK,
 )
 async def getTerms(
     input: str,
+    parentName: str,
+    parentTermAccession: str,
     request: Request,
     advanced=False,
 ):
-    # get the body of the post request
-    requestBody = await request.body()
-
-    try:
-        content = json.loads(requestBody)
-
-        # there should be a parent name and an accession set inside of the body
-        parentName = content["parent_name"]
-        parentTermAccession = content["parent_accession"]
-
-    # if there are either the name or the accession missing, return error 400
-    except:
-        logging.warning(
-            "Client request couldn't be processed because either the parent name or accession is missing!"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Couldn't retrieve parent_term name and/or accession",
-        )
-
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
         # if there is an extended search requested, make an advanced search call
@@ -1139,32 +1121,14 @@ async def getTerms(
     return request.json()
 
 
-@router.post(
+@router.get(
     "/getTermSuggestions",
     summary="Retrieve Term suggestions for the given parent term",
     status_code=status.HTTP_200_OK,
 )
-async def getTermSuggestions(request: Request):
-    # get the body of the post request
-    requestBody = await request.body()
-
-    try:
-        content = json.loads(requestBody)
-
-        # there should be a parent name and an accession set inside of the body
-        parentName = content["parent_name"]
-        parentTermAccession = content["parent_accession"]
-
-    # if there is either the name or the accession missing, return error 400
-    except:
-        logging.warning(
-            "Client request couldn't be processed because either the parent name or accession is missing!"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Couldn't retrieve parent_term name and/or accession",
-        )
-
+async def getTermSuggestions(
+    request: Request, parentName: str, parentTermAccession: str
+):
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
         # default is an request call containing the parentTerm values
@@ -1208,7 +1172,7 @@ async def getTermSuggestions(request: Request):
     return request.json()
 
 
-@router.post(
+@router.put(
     "/saveSheet",
     summary="Update or save changes to a sheet",
     status_code=status.HTTP_200_OK,
@@ -1243,6 +1207,10 @@ async def saveSheet(request: Request):
     pathName = (
         os.environ.get("BACKEND_SAVE") + target + "-" + str(projectId) + "/" + path
     )
+    # if no sheet name is given, name it "sheet1"
+    if name == "":
+        name = "sheet1"
+
     # add the new sheet to the file
     createSheet(templateHead, templateContent, path, projectId, target, name)
 
