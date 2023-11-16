@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
+import requests.packages.urllib3.util.connection
 
 app = FastAPI(
     docs_url="/arcmanager/api/v1/docs", openapi_url="/arcmanager/api/v1/openapi.json"
@@ -24,6 +25,8 @@ origins = [
     "https://nfdi4plants.de"
 ]
 
+# requests module tries ipv6 first for every request which creates problems with the plantmicrobe hub; this disables ipv6 and forces ipv4, solving the issue for now
+requests.packages.urllib3.util.connection.HAS_IPV6 = False
 
 app.add_middleware(
     CORSMiddleware,
