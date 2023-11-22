@@ -1122,11 +1122,11 @@ async def getTerms(
 
 
 @router.get(
-    "/getTermSuggestions",
+    "/getTermSuggestionsByParentTerm",
     summary="Retrieve Term suggestions for the given parent term",
     status_code=status.HTTP_200_OK,
 )
-async def getTermSuggestions(
+async def getTermSuggestionsByParentTerm(
     request: Request, parentName: str, parentTermAccession: str
 ):
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
@@ -1172,6 +1172,55 @@ async def getTermSuggestions(
     return request.json()
 
 
+@router.get(
+    "/getTermSuggestions",
+    summary="Retrieve Term suggestions by given input",
+    status_code=status.HTTP_200_OK,
+)
+async def getTermSuggestions(request: Request, input: str, n=20):
+    # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
+    try:
+        # default is an request call containing the parentTerm values
+        request = requests.post(
+            "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermSuggestions",
+            data=json.dumps(
+                [
+                    {
+                        "n": n,
+                        "ontology": None,
+                        "query": input,
+                    }
+                ]
+            ),
+            timeout=7,
+        )
+
+        logging.debug("Getting list of suggestion terms for the input '" + input + "'!")
+    # if there is a timeout, respond with an error 504
+    except requests.exceptions.Timeout:
+        logging.warning("Request took to long! Sending timeout error to client...")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="No terms could be found in time!",
+        )
+
+    # if there is a different kind of error, return error 400
+    except:
+        logging.error(
+            "There was an error retrieving the terms for '"
+            + input
+            + "'! ERROR: "
+            + str(request.json())
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your request couldn't be processed!",
+        )
+    logging.info("Sent a list of terms for '" + input + "' to client!")
+    # return the list of terms found for the given input
+    return request.json()
+
+
 @router.put(
     "/saveSheet",
     summary="Update or save changes to a sheet",
@@ -1213,6 +1262,12 @@ async def saveSheet(request: Request):
 
     # add the new sheet to the file
     createSheet(templateHead, templateContent, path, projectId, target, name)
+
+    trackChanges(
+        "Edited sheet "+name+" of file "+path,
+        str(projectId),
+        target,
+    )
 
     # send the edited file back to gitlab
     response = await commitFile(request, projectId, path, pathName, message=name)
