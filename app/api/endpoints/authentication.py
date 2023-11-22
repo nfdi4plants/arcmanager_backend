@@ -46,21 +46,36 @@ oauth.register(
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    redirect_uri = request.url_for("callback")
-    # redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback"
-    # store requested datahub in user session
-    request.session["datahub"] = datahub
-    # construct authorization url for requested datahub and redirect
-    if datahub == "dev":
-        return await oauth.dev.authorize_redirect(request, redirect_uri)
-    elif datahub == "tübingen":
-        return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
-    elif datahub == "freiburg":
-        return await oauth.freiburg.authorize_redirect(request, redirect_uri)
-    elif datahub == "plantmicrobe":
-        return await oauth.plantmicrobe.authorize_redirect(request, redirect_uri)
-    else:
-        return "invalid DataHUB selection"
+    # redirect_uri = (
+    #    "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    # )
+    redirect_uri = (
+        "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    )
+    try:
+        # construct authorization url for requested datahub and redirect
+        if datahub == "dev":
+            return await oauth.dev.authorize_redirect(request, redirect_uri)
+        elif datahub == "tübingen":
+            # change uri with 'ü' to 'ue'
+            # redirect_uri = "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+            redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+            return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
+        elif datahub == "freiburg":
+            return await oauth.freiburg.authorize_redirect(request, redirect_uri)
+        elif datahub == "plantmicrobe":
+            return await oauth.plantmicrobe.authorize_redirect(request, redirect_uri)
+        elif datahub == "tuebingen":
+            return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
+        else:
+            return "invalid DataHUB selection"
+
+    # if authentication fails (e.g. due to a timeout), then return back to the frontend containing an error in the cookies
+    except:
+        # response = RedirectResponse("http://localhost:5173")
+        response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
+        response.set_cookie("error", "DataHUB not available")
+        return response
 
 
 # retrieve tokens after successful login and store it in session object
@@ -68,17 +83,14 @@ async def login(request: Request, datahub: str):
     "/callback",
     summary="Redirection after successful user login and creation of server-side user session",
 )
-async def callback(request: Request):
-    # read requested datahub from user session
-    datahub = request.session.get("datahub")
-
-    token = ""
-    response = RedirectResponse("http://localhost:5173")
+async def callback(request: Request, datahub: str):
+    # response = RedirectResponse("http://localhost:5173")
+    response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
 
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
-        elif datahub == "tübingen":
+        elif datahub == "tuebingen":
             token = await oauth.tuebingen.authorize_access_token(request)
         elif datahub == "freiburg":
             token = await oauth.freiburg.authorize_access_token(request)
@@ -86,9 +98,13 @@ async def callback(request: Request):
             token = await oauth.plantmicrobe.authorize_access_token(request)
 
     except OAuthError as error:
-        return HTMLResponse(f"<h1>{error.error}</h1>")
+        return HTMLResponse(f"<h1>{error}</h1>")
 
-    access_token = token.get("access_token")
+    try:
+        access_token = token.get("access_token")
+    except:
+        raise OAuthError(description="Failed retrieving the token data")
+
     userInfo = token.get("userinfo")["sub"]
     cookieData = {
         "gitlab": access_token,
@@ -100,6 +116,7 @@ async def callback(request: Request):
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
+
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
@@ -112,6 +129,8 @@ async def callback(request: Request):
         await getUserName(datahub, userInfo, access_token),
         httponly=False,
     )
+    # delete any leftover error cookie
+    response.delete_cookie("error")
 
     request.session.clear()
     return response
@@ -121,7 +140,7 @@ async def callback(request: Request):
 async def logout(request: Request):
     response = Response("logout successful", media_type="text/plain")
 
-    # if the user logs out, delete the "data" cookie containing the gitlab token
+    # if the user logs out, delete the "data" cookie containing the gitlab token, as well as the other cookies set
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")

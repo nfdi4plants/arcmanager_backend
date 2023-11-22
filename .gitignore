@@ -169,5 +169,7 @@ cython_debug/
 # excel files
 *.xlsx
 
-# production deployment documentation
+
+# Production deployment documentation
+
 deployment.md

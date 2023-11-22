@@ -34,5 +34,3 @@ uvicorn main:app
 ```
 
 To test the backend, browse to: [localhost](http://localhost:8000/docs)
-
-Currently the backend connects mainly to [gitdev.nfdi4plants.org](https://gitdev.nfdi4plants.org/explore)

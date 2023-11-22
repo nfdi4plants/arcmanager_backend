@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
-from uuid import uuid4
+import requests.packages.urllib3.util.connection
 
 app = FastAPI(
     docs_url="/arcmanager/api/v1/docs", openapi_url="/arcmanager/api/v1/openapi.json"
@@ -21,8 +21,12 @@ origins = [
     "https://localhost:4173",
     "http://localhost:5173",
     "http://localhost:4173",
+    "https://nfdi4plants.de/arcmanager/app/index.html",
+    "https://nfdi4plants.de"
 ]
 
+# requests module tries ipv6 first for every request which creates problems with the plantmicrobe hub; this disables ipv6 and forces ipv4, solving the issue for now
+requests.packages.urllib3.util.connection.HAS_IPV6 = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,8 +36,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-app.add_middleware(SessionMiddleware, secret_key=str(uuid4()), max_age=None)
+# secret key has to be static or else there will be mismatching states between the workers (https://stackoverflow.com/questions/61922045/mismatchingstateerror-mismatching-state-csrf-warning-state-not-equal-in-reque)
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY"), max_age=None)
 
 """
 @app.middleware("http")
