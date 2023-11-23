@@ -291,6 +291,10 @@ def appendAssay(pathToAssay: str, pathToStudy: str, assayName: str):
     for x in range(len(assay)):
         study.iat[assayIndex + x, freeColumn] = assay.iat[x, 1]
 
+    # make space for the date if there are just two columns
+    if len(study.columns) < 3:
+        study["Unnamed: 2"] = ""
+
     # insert the current date next to the identifier to indicate the date since the metadata was last edited
     study.iat[0, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
@@ -375,6 +379,10 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
     for x in range(len(study)):
         for y in range(len(study.columns)):
             invest.iat[rowIndex + x, y] = study.iat[x, y]
+
+    # make space for the date if there are just two columns
+    if len(invest.columns) < 3:
+        invest["Unnamed: 2"] = ""
 
     # insert the current date next to the identifier to indicate the date since the metadata was last edited
     invest.iat[5, 2] = datetime.date.today().strftime("%d/%m/%Y")
