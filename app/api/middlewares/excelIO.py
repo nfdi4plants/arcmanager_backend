@@ -39,9 +39,8 @@ def readIsaFile(path: str, type: str):
         try:
             isaFile = pd.read_excel(path, sheet_name=sheetName2)
         except:
+            # if none matches, just read the file with default values
             isaFile = pd.read_excel(path, 0)
-
-        # if none matches, just read the file with default values
 
     # parse the dataframe into json and return it
     parsed = loads(isaFile.to_json(orient="split"))

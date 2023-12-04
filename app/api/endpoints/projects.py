@@ -429,7 +429,7 @@ async def saveFile(request: Request):
     return str(commitResponse)
 
 
-@router.post("/commitFile", summary="Update the content of the file on the repo")
+@router.post("/commitFile", summary="Update the content of the file to the repo")
 # sends the http PUT request to the git to commit the file on the given filepath
 async def commitFile(
     request: Request, id: int, repoPath, filePath="", branch="main", message=""
@@ -899,11 +899,7 @@ async def createIsa(
     return commitRequest.content
 
 
-@router.post(
-    "/uploadFile",
-    summary="Uploads the given file to the repo",
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/uploadFile", summary="Uploads the given file to the repo")
 async def uploadFile(request: Request):
     # get the data from the body
     requestBody = await request.body()
@@ -926,24 +922,61 @@ async def uploadFile(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
-    payload = {
-        "branch": str(fileContent["branch"]),
-        # base64 encoding of the isa file
-        "content": fileContent["content"],
-        "commit_message": "Upload of new File " + str(fileContent["name"]),
-        "encoding": "base64",
-    }
-    # send the file to the gitlab
-    request = requests.post(
+    # check if file already exists
+    fileHead = requests.head(
         os.environ.get(target)
         + "/api/v4/projects/"
         + str(fileContent["id"])
         + "/repository/files/"
-        + quote(fileContent["path"], safe=""),
-        data=json.dumps(payload),
+        # url encode the path
+        + quote(fileContent["path"], safe="") + "?ref=" + str(fileContent["branch"]),
         headers=header,
     )
+    # if file doesn't exist, upload file
+    if not fileHead.ok:
+        # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
+        payload = {
+            "branch": str(fileContent["branch"]),
+            # base64 encoding of the isa file
+            "content": fileContent["content"],
+            "commit_message": "Upload of new File " + str(fileContent["name"]),
+            "encoding": "base64",
+        }
+
+        # update the file on the gitlab
+        request = requests.post(
+            os.environ.get(target)
+            + "/api/v4/projects/"
+            + str(fileContent["id"])
+            + "/repository/files/"
+            + quote(fileContent["path"], safe=""),
+            data=json.dumps(payload),
+            headers=header,
+        )
+        statusCode = status.HTTP_201_CREATED
+
+    # if file already exists, update the file
+    else:
+        payload = {
+            "branch": str(fileContent["branch"]),
+            # base64 encoding of the isa file
+            "content": fileContent["content"],
+            "commit_message": "Updating File " + str(fileContent["name"]),
+            "encoding": "base64",
+        }
+
+        # send the file to the gitlab
+        request = requests.put(
+            os.environ.get(target)
+            + "/api/v4/projects/"
+            + str(fileContent["id"])
+            + "/repository/files/"
+            + quote(fileContent["path"], safe=""),
+            data=json.dumps(payload),
+            headers=header,
+        )
+        statusCode = status.HTTP_200_OK
+
     logging.debug("Uploading file to repo...")
     if not request.ok:
         logging.error("Couldn't upload to ARC! ERROR: " + str(request.content))
@@ -962,11 +995,14 @@ async def uploadFile(request: Request):
         + str(fileContent["path"])
     )
     trackChanges(
-        "Added new file " + str(fileContent["name"]),
+        "Added/Updated file " + str(fileContent["name"]),
         str(fileContent["id"]),
         data["target"],
     )
-    return request.content
+
+    response = Response(request.content, statusCode)
+
+    return response
 
 
 @router.get(
@@ -1264,7 +1300,7 @@ async def saveSheet(request: Request):
     createSheet(templateHead, templateContent, path, projectId, target, name)
 
     trackChanges(
-        "Edited sheet "+name+" of file "+path,
+        "Edited sheet " + name + " of file " + path,
         str(projectId),
         target,
     )
@@ -1387,17 +1423,13 @@ async def getAssays(request: Request, id: int):
     return assays
 
 
-@router.get("/syncAssay", summary="Syncs an assay into a study")
-async def syncAssay(
-    request: Request,
-    id: int,
-    pathToStudy: str,
-    pathToAssay: str,
-    assayName: str,
-    branch="main",
-):
+@router.patch("/syncAssay", summary="Syncs an assay into a study")
+async def syncAssay(request: Request):
+    # get the data from the body
+    requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
+        fileContent = json.loads(requestBody)
         target = data["target"]
 
     except:
@@ -1405,6 +1437,20 @@ async def syncAssay(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
+        )
+
+    # get the necessary information from the request
+    try:
+        id = fileContent["id"]
+        pathToStudy = fileContent["pathToStudy"]
+        pathToAssay = fileContent["pathToAssay"]
+        assayName = fileContent["assayName"]
+        branch = fileContent["branch"]
+
+    except:
+        logging.warning("Missing Data for Assay sync! Data: " + str(fileContent))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
 
     # get the two files in the backend
@@ -1441,20 +1487,17 @@ async def syncAssay(
         )
 
     logging.info("Sent file " + pathToStudy + " to ARC " + str(id))
-    # frontend gets a simple 'success' as response
+    # frontend gets the response from the commit post back
     return str(commitResponse)
 
 
-@router.get("/syncStudy", summary="Syncs a study into the investigation file")
-async def syncStudy(
-    request: Request,
-    id: int,
-    pathToStudy: str,
-    studyName: str,
-    branch="main",
-):
+@router.patch("/syncStudy", summary="Syncs a study into the investigation file")
+async def syncStudy(request: Request):
+    # get the data from the body
+    requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
+        fileContent = json.loads(requestBody)
         target = data["target"]
 
     except:
@@ -1462,6 +1505,19 @@ async def syncStudy(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
+        )
+
+    # get the necessary information from the request
+    try:
+        id = fileContent["id"]
+        pathToStudy = fileContent["pathToStudy"]
+        studyName = fileContent["studyName"]
+        branch = fileContent["branch"]
+
+    except:
+        logging.warning("Missing Data for Assay sync! Data: " + str(fileContent))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
 
     # get the two files in the backend
