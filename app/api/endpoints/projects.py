@@ -360,8 +360,8 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         return arcFile.json()
 
 
-# reads out the content of the post request body; writes the content to the corresponding isa file on the storage
-@router.put("/saveFile", summary="Write isa/overwrite isa file to backend storage")
+# reads out the content of the put request body; writes the content to the corresponding isa file on the storage
+@router.put("/saveFile", summary="Write content to isa file")
 async def saveFile(request: Request):
     requestBody = await request.body()
     try:
@@ -459,8 +459,6 @@ async def commitFile(
     if message != "":
         commitMessage += ", changed " + message
 
-    # track the changes to the changes.txt
-    trackChanges(commitMessage, id, targetRepo)
     header = {
         "Authorization": "Bearer " + data["gitlab"],
         "Content-Type": "application/json",
@@ -504,16 +502,6 @@ async def commitFile(
         )
     logging.info("Updated file on path: " + str(repoPath))
     return request.content
-
-
-# function to add a new entry to the changes.txt
-def trackChanges(message: str, id: int, target: str):
-    path = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/changes.txt"
-
-    with open(path, "a+") as reader:
-        reader.write(
-            datetime.date.today().strftime("%d/%m/%Y") + " : " + message + "\n"
-        )
 
 
 # creates a new project in the repo with a readme file; we then initialize the repo folder on the server with the new id of the ARC;
@@ -686,10 +674,7 @@ async def createArc(
         repoId=newArcJson["id"],
         location=data["target"],
     )
-    # track the changes and send the edited investigation file back to gitlab
-    trackChanges(
-        "Initial commit of the arc structure", newArcJson["id"], data["target"]
-    )
+
     await commitFile(
         request=request,
         id=newArcJson["id"],
@@ -827,7 +812,6 @@ async def createIsa(
             + str(commitRequest.content),
         )
 
-    trackChanges("Added new " + type + " " + identifier, id, data["target"])
     logging.info("Created " + identifier + " in " + type + " for ARC " + str(id))
 
     # write identifier into file
@@ -985,7 +969,7 @@ async def uploadFile(request: Request):
             detail="Couldn't upload file to repo! Error: " + str(request.content),
         )
 
-    # logging and tracking the change in the changes file
+    # logging
     logging.info(
         "Uploaded new File "
         + str(fileContent["name"])
@@ -993,11 +977,6 @@ async def uploadFile(request: Request):
         + str(fileContent["id"])
         + " on path: "
         + str(fileContent["path"])
-    )
-    trackChanges(
-        "Added/Updated file " + str(fileContent["name"]),
-        str(fileContent["id"]),
-        data["target"],
     )
 
     response = Response(request.content, statusCode)
@@ -1299,12 +1278,6 @@ async def saveSheet(request: Request):
     # add the new sheet to the file
     createSheet(templateHead, templateContent, path, projectId, target, name)
 
-    trackChanges(
-        "Edited sheet " + name + " of file " + path,
-        str(projectId),
-        target,
-    )
-
     # send the edited file back to gitlab
     response = await commitFile(request, projectId, path, pathName, message=name)
 
@@ -1347,15 +1320,14 @@ async def getSheets(request: Request, path: str, id, branch="main"):
 
 @router.get(
     "/getChanges",
-    summary="Get tracked changes of the ARC",
+    summary="Get the commit history of the ARC",
     status_code=status.HTTP_200_OK,
 )
 async def getChanges(request: Request, id: int):
     try:
         data = getData(request.cookies.get("data"))
-        target = data["target"]
-        # request arc info to test valid authentication
-        await arc_tree(id=id, request=request)
+        header = {"Authorization": "Bearer " + data["gitlab"]}
+        target = getTarget(data["target"])
     except:
         logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
         raise HTTPException(
@@ -1363,19 +1335,30 @@ async def getChanges(request: Request, id: int):
             detail="No authorized cookie found!",
         )
 
-    pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/changes.txt"
+    commits = requests.get(
+        os.environ.get(target)
+        + "/api/v4/projects/"
+        + str(id)
+        + "/repository/commits?per_page=100",
+        headers=header,
+    )
 
-    # try to read out the file if it exits
-    try:
-        file = open(pathName, "r")
-        text = file.read()
-    # if there is no changes file, raise error 404
-    except:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="No tracked changes found!"
+    if not commits.ok:
+        logging.error(
+            "Commits not found! ID: " + str(id) + " ; ERROR: " + str(commits.content)
         )
-    # send the file back as plain text
-    response = Response(content=text, headers={"Content-Type": "text/plain"})
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Commits not found! Error: "
+            + str(commits.content)
+            + "! Try to login again!",
+        )
+    commitJson = commits.json()
+
+    response = []
+    for entry in commitJson:
+        response.append(entry["authored_date"].split("T")[0] + ": " + entry["title"])
+
     return response
 
 
