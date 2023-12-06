@@ -2,7 +2,12 @@
 
 For now just some random notes. But if we have a concept, this can go here...
 
-***
+## Proposed implementation of arc-validate
+
+[arc-validate](https://github.com/nfdi4plants/arc-validate) looks really promising! Maybe we should just incorporate it into our backend and somehow transform their output in something we can use
+
+![image](https://github.com/nfdi4plants/arcmanager_backend/assets/133099925/db6455e2-944e-424e-863a-d97a0bc5010e)
+
 
 ## Notes
 
