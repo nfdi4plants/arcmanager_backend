@@ -98,7 +98,10 @@ def writeIsaFile(
     for x in range(1, len(newContent)):
         # if there are new fields in newContent insert a new column "Unnamed: number" with empty fields
         if x > len(oldContent) - 1:
-            isaFile.insert(x, "Unnamed: " + str(x), "")
+            try:
+                isaFile.insert(x, "Unnamed: " + str(x), "")
+            except:
+                isaFile.insert(x, "Unnamed")
             # add the new field to old content to extent its length
             oldContent.append("")
 

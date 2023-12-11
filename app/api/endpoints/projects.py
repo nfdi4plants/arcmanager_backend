@@ -14,7 +14,6 @@ from fastapi.encoders import jsonable_encoder
 # gitlab api commits need base64 encoded content
 import base64
 
-import datetime
 import jwt
 
 import logging
@@ -127,7 +126,6 @@ async def list_arcs(request: Request, owned=False):
         )
 
     if not arcs.ok:
-        print(arcs.content)
         logging.warning("Access Token of client is expired!")
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -338,7 +336,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         return fileJson["data"]
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
-        # if file is too big, skip downloading it
+        # if file is too big, skip requesting it
         if int(fileSize) > 10000000:
             logging.warning("File too large! Size: " + fileSize)
             raise HTTPException(
@@ -429,7 +427,7 @@ async def saveFile(request: Request):
     return str(commitResponse)
 
 
-@router.post("/commitFile", summary="Update the content of the file to the repo")
+@router.put("/commitFile", summary="Update the content of the file to the repo")
 # sends the http PUT request to the git to commit the file on the given filepath
 async def commitFile(
     request: Request, id: int, repoPath, filePath="", branch="main", message=""
@@ -506,21 +504,20 @@ async def commitFile(
 
 # creates a new project in the repo with a readme file; we then initialize the repo folder on the server with the new id of the ARC;
 # then we create the arc and the investigation file and commit the whole structure to the repo
-@router.get(
+@router.post(
     "/createArc", summary="Creates a new Arc", status_code=status.HTTP_201_CREATED
 )
-async def createArc(
-    request: Request,
-    name: str,
-    description: str,
-    investIdentifier: str,
-):
+async def createArc(request: Request):
+    # get the data from the body
+    requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
         header = {
             "Authorization": "Bearer " + data["gitlab"],
             "Content-Type": "application/json",
         }
+        arcContent = json.loads(requestBody)
+
         target = getTarget(data["target"])
     except:
         logging.warning(
@@ -529,6 +526,17 @@ async def createArc(
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="Please login to create a new ARC",
+        )
+    # read out the new arc properties
+    try:
+        name = arcContent["name"]
+        description = arcContent["description"]
+        investIdentifier = arcContent["investIdentifier"]
+    except:
+        logging.error("Missing content for arc creation! Data: " + str(arcContent))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing content for arc creation!",
         )
 
     # here we create the project with the readme file
@@ -691,20 +699,22 @@ async def createArc(
 
 
 # here we create a assay or study structure and push it to the repo
-@router.get(
+@router.post(
     "/createISA",
     summary="Creates a new ISA structure",
     status_code=status.HTTP_201_CREATED,
 )
-async def createIsa(
-    request: Request, identifier: str, id: int, type: str, branch="main"
-):
+async def createIsa(request: Request):
+    # get the data from the body
+    requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
         header = {
             "Authorization": "Bearer " + data["gitlab"],
             "Content-Type": "application/json",
         }
+        isaContent = json.loads(requestBody)
+
         target = getTarget(data["target"])
     except:
         logging.warning(
@@ -712,6 +722,19 @@ async def createIsa(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
+        )
+
+    # load the isa properties
+    try:
+        identifier = isaContent["identifier"]
+        id = isaContent["id"]
+        type = isaContent["type"]
+        branch = isaContent["branch"]
+    except:
+        logging.error("Missing Properties for isa! Data: " + str(isaContent))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Properties for the isa!",
         )
 
     # the identifier must not contain white space
@@ -1110,7 +1133,7 @@ async def getTerms(
                 + parentName
                 + "'!"
             )
-    # if there is a timeout, respond with an error 503
+    # if there is a timeout, respond with an error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
         raise HTTPException(
@@ -1162,7 +1185,7 @@ async def getTermSuggestionsByParentTerm(
         logging.debug(
             "Getting list of suggestion terms for the parent '" + parentName + "'!"
         )
-    # if there is a timeout, respond with an error 504
+    # if there is a timeout, respond with error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
         raise HTTPException(
