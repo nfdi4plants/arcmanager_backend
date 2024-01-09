@@ -53,9 +53,7 @@ def writeIsaFile(
     path: str, type: str, id: int, oldContent, newContent, repoId: int, location: str
 ):
     # construct the path with the given values (e.g. .../freiburg-33/isa.investigation.xlsx)
-    pathName = (
-        os.environ.get("BACKEND_SAVE") + location + "-" + str(repoId) + "/" + path
-    )
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{location}-{repoId}/{path}"
     identifierLocation = 5
 
     # match the correct sheet name with the given type of isa
@@ -196,7 +194,7 @@ def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
     for i, entry in enumerate(head):
         df.insert(i + 1, entry, content[i], allow_duplicates=True)
 
-    pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + path
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{path}"
 
     # save data to file
     with pd.ExcelWriter(

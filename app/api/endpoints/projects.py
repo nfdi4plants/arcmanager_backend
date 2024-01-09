@@ -39,6 +39,9 @@ from app.models.keycloak.access_token import *
 from app.models.gitlab.commit import *
 from app.models.swate.template import *
 
+import hashlib
+import tempfile
+
 router = APIRouter()
 
 logging.basicConfig(
@@ -71,7 +74,7 @@ def getTarget(target: str):
 async def getUserName(target: str, userId: int, access_token: str):
     header = {"Authorization": "Bearer " + access_token}
     userInfo = requests.get(
-        os.environ.get(getTarget(target)) + "/api/v4/users/" + str(userId),
+        f"{os.environ.get(getTarget(target))}/api/v4/users/{userId}",
         headers=header,
     ).json()
 
@@ -106,8 +109,7 @@ async def list_arcs(request: Request, owned=False):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client connected with no valid cookies/Client is not logged in. Cookies: "
-            + str(request.cookies)
+            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -115,13 +117,12 @@ async def list_arcs(request: Request, owned=False):
         )
     if owned == "true":
         arcs = requests.get(
-            os.environ.get(target)
-            + "/api/v4/projects?per_page=1000&min_access_level=10",
+            f"{os.environ.get(target)}/api/v4/projects?per_page=1000&min_access_level=10",
             headers=header,
         )
     else:
         arcs = requests.get(
-            os.environ.get(target) + "/api/v4/projects?per_page=1000",
+            f"{os.environ.get(target)}/api/v4/projects?per_page=1000",
             headers=header,
         )
 
@@ -152,7 +153,7 @@ async def public_arcs(target: str):
     try:
         # if the requested gitlab is not available after 30s, return error 504
         request = requests.get(
-            os.environ.get(target) + "/api/v4/projects?per_page=1000", timeout=30
+            f"{os.environ.get(target)}/api/v4/projects?per_page=1000", timeout=30
         )
     except:
         raise HTTPException(
@@ -163,7 +164,7 @@ async def public_arcs(target: str):
     if not request.ok:
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error retrieving the arcs! ERROR: " + str(request.content),
+            detail=f"Error retrieving the arcs! ERROR: {request.content}",
         )
 
     project_list = Projects(projects=request.json())
@@ -182,7 +183,7 @@ async def arc_tree(id: int, request: Request):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client has no rights to view this ARC! Cookies: " + str(request.cookies)
+            "Client has no rights to view this ARC! Cookies: " + f"{request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -190,26 +191,15 @@ async def arc_tree(id: int, request: Request):
         )
 
     arc = requests.get(
-        os.environ.get(target)
-        + "/api/v4/projects/"
-        + str(id)
-        + "/repository/tree?per_page=100",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100",
         headers=header,
     )
 
     if not arc.ok:
-        logging.error(
-            "Couldn't find ARC with ID "
-            + str(id)
-            + "; ERROR: "
-            + str(arc.content[0:100])
-        )
+        logging.error(f"Couldn't find ARC with ID {id}; ERROR: {arc.content[0:100]}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Couldn't find ARC with ID "
-            + str(id)
-            + "; Error: "
-            + str(arc.content),
+            detail=f"Couldn't find ARC with ID {id}; Error: {arc.content}",
         )
 
     arc_json = Arc(Arc=arc.json())
@@ -229,37 +219,26 @@ async def arc_path(id: int, request: Request, path: str):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client is not authorized to view ARC "
-            + str(id)
-            + " ; Cookies: "
-            + str(request.cookies)
+            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="You are not authorized to view this ARC",
         )
     arcPath = requests.get(
-        os.environ.get(target)
-        + "/api/v4/projects/"
-        + str(id)
-        + "/repository/tree?per_page=100&path="
-        + path,
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&path={path}",
         headers=header,
     )
     # raise error if the given path gives no result
     if not arcPath.ok:
-        logging.error(
-            "Path not found! Path: " + path + " ; ERROR: " + str(arcPath.content)
-        )
+        logging.error(f"Path not found! Path: { path } ; ERROR: {arcPath.content}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Path not found! Error: "
-            + str(arcPath.content)
-            + "! Try to login again!",
+            detail=f"Path not found! Error: {arcPath.content}! Try to login again!",
         )
 
     arc_json = Arc(Arc=arcPath.json())
-    logging.info("Sent info of ARC " + str(id) + " with path " + path)
+    logging.info(f"Sent info of ARC {id} with path {path}")
 
     return arc_json
 
@@ -277,27 +256,24 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client is not authorized to get the file! Cookies: " + str(request.cookies)
+            f"Client is not authorized to get the file! Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="You are not authorized to get this file",
         )
     # get HEAD data for fileSize
+    # url encode the path
     fileHead = requests.head(
-        os.environ.get(target) + "/api/v4/projects/" + str(id) + "/repository/files/"
-        # url encode the path
-        + quote(path, safe="") + "?ref=" + branch,
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
         headers=header,
     )
     # raise error if file not found
     if not fileHead.ok:
-        logging.error(
-            "File not found! Path: " + path + " ; ERROR: " + str(fileHead.content)
-        )
+        logging.error(f"File not found! Path: {path} ; ERROR: {fileHead.content}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found! Error: " + str(fileHead.content),
+            detail=f"File not found! Error: {fileHead.content}",
         )
 
     fileSize = fileHead.headers["X-Gitlab-Size"]
@@ -306,20 +282,12 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
     if getIsaType(path) != "":
         # get the raw ISA file
         fileRaw = requests.get(
-            os.environ.get(target)
-            + "/api/v4/projects/"
-            + str(id)
-            + "/repository/files/"
-            + quote(path, safe="")
-            + "/raw?ref="
-            + branch,
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
             headers=header,
         ).content
 
         # construct path to save on the backend
-        pathName = (
-            os.environ.get("BACKEND_SAVE") + data["target"] + "-" + str(id) + "/" + path
-        )
+        pathName = f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{path}"
 
         # create directory for the file to save it, skip if it exists already
         os.makedirs(os.path.dirname(pathName), exist_ok=True)
@@ -331,7 +299,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         # read out isa file and create json
         fileJson = readIsaFile(pathName, getIsaType(path))
 
-        logging.info("Sent ISA file " + path + " from ID: " + str(id))
+        logging.info(f"Sent ISA file {path} from ID: {id}")
 
         return fileJson["data"]
     # if its not a isa file, return the default metadata of the file to the frontend
@@ -345,18 +313,31 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
             )
         # get the file metadata
         arcFile = requests.get(
-            os.environ.get(target)
-            + "/api/v4/projects/"
-            + str(id)
-            + "/repository/files/"
-            + quote(path, safe="")
-            + "?ref="
-            + branch,
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
             headers=header,
         )
-        logging.info("Sent info of " + path + " from ID: " + str(id))
-        return arcFile.json()
+        logging.info(f"Sent info of {path} from ID: {id}")
 
+        if path.endswith((".txt", ".md", ".html", ".xml")):
+            # sanitize content
+            # decode the file
+            decoded = base64.b64decode(arcFile.json()["content"]).decode("ascii")
+
+            # remove script and iframe tags
+            decoded = decoded.replace("<script>", "---here was a script tag---")
+            decoded = decoded.replace("</script>", "")
+            decoded = decoded.replace("<iframe>", "---here was a iframe tag---")
+            decoded = decoded.replace("</iframe>", "")
+
+            # encode file back and return it to the user
+            encoded = decoded.encode("utf-8")
+            encoded = base64.b64encode(encoded)
+
+            fileJson = arcFile.json()
+            fileJson["content"] = encoded
+            return fileJson
+        else:
+            return arcFile.json()
 
 # reads out the content of the put request body; writes the content to the corresponding isa file on the storage
 @router.put("/saveFile", summary="Write content to isa file")
@@ -369,16 +350,13 @@ async def saveFile(request: Request):
         target = data["target"]
     except:
         logging.error(
-            "SaveFile Request couldn't be processed! Cookies: "
-            + str(request.cookies)
-            + " ; Body: "
-            + str(request.body)
+            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    logging.debug("Content of isa file change: " + str(isaContent))
+    logging.debug(f"Content of isa file change: {isaContent}")
     # write the content to the isa file and get the name of the edited row
     rowName = writeIsaFile(
         isaContent["isaPath"],
@@ -391,14 +369,8 @@ async def saveFile(request: Request):
     )
     logging.debug("write content to isa file...")
     # the path of the file on the storage for the commit request
-    pathName = (
-        os.environ.get("BACKEND_SAVE")
-        + data["target"]
-        + "-"
-        + str(isaContent["isaRepo"])
-        + "/"
-        + isaContent["isaPath"]
-    )
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{isaContent['isaRepo']}/{isaContent['isaPath']}"
+
     logging.debug("committing file to repo...")
     # call the commit function
     try:
@@ -412,18 +384,15 @@ async def saveFile(request: Request):
         )
     except:
         logging.warning(
-            "Client is not authorized to commit to ARC! Cookies: "
-            + str(request.cookies)
+            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="No authorized session cookie found",
         )
 
-    logging.info(
-        "Sent file " + isaContent["isaPath"] + " to ARC " + str(isaContent["isaRepo"])
-    )
-    # frontend gets a simple 'success' as response
+    logging.info(f"Sent file {isaContent['isaPath']} to ARC {isaContent['isaRepo']}")
+
     return str(commitResponse)
 
 
@@ -443,10 +412,7 @@ async def commitFile(
 
     except:
         logging.error(
-            "SaveFile Request couldn't be processed! Cookies: "
-            + str(request.cookies)
-            + " ; Body: "
-            + str(request.body)
+            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -483,22 +449,18 @@ async def commitFile(
         }
 
     request = requests.put(
-        os.environ.get(getTarget(targetRepo))
-        + "/api/v4/projects/"
-        + str(id)
-        + "/repository/files/"
-        + quote(repoPath, safe=""),
+        f"{os.environ.get(getTarget(targetRepo))}/api/v4/projects/{id}/repository/files/{quote(repoPath, safe='')}",
         data=json.dumps(payload),
         headers=header,
     )
 
     if not request.ok:
-        logging.error("Couldn't commit to ARC! ERROR: " + str(request.content))
+        logging.error(f"Couldn't commit to ARC! ERROR: {request.content}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Couldn't commit file to repo! Error: " + str(request.content),
+            detail=f"Couldn't commit file to repo! Error: {request.content}",
         )
-    logging.info("Updated file on path: " + str(repoPath))
+    logging.info(f"Updated file on path: {repoPath}")
     return request.content
 
 
@@ -521,7 +483,7 @@ async def createArc(request: Request):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client not logged in for ARC creation! Cookies: " + str(request.cookies)
+            f"Client not logged in for ARC creation! Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -533,7 +495,7 @@ async def createArc(request: Request):
         description = arcContent["description"]
         investIdentifier = arcContent["investIdentifier"]
     except:
-        logging.error("Missing content for arc creation! Data: " + str(arcContent))
+        logging.error(f"Missing content for arc creation! Data: {arcContent}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing content for arc creation!",
@@ -548,16 +510,16 @@ async def createArc(request: Request):
         data=json.dumps(project),
     )
     if not projectPost.ok:
-        logging.error("Couldn't create new ARC! ERROR: " + str(projectPost.content))
+        logging.error(f"Couldn't create new ARC! ERROR: {projectPost.content}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Couldn't create new project! Error: " + str(projectPost.content),
+            detail=f"Couldn't create new project! Error: {projectPost.content}",
         )
 
-    logging.debug("Creating new project with payload " + str(project))
+    logging.debug(f"Creating new project with payload {project}")
     # we get all the necessary information back from gitlab, like id, main branch,...
     newArcJson = projectPost.json()
-    logging.info("Created Arc with Id: " + str(newArcJson["id"]))
+    logging.info(f"Created Arc with Id: {newArcJson['id']}")
 
     # replace empty space with underscores (arccommander can't process spaces in strings)
     investIdentifier = investIdentifier.replace(" ", "_")
@@ -574,9 +536,7 @@ async def createArc(request: Request):
             "file_path": "isa.investigation.xlsx",
             "content": base64.b64encode(
                 open(
-                    os.environ.get("BACKEND_SAVE")
-                    + "/isa_files"
-                    + "/isa.investigation.xlsx",
+                    f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.investigation.xlsx",
                     "rb",
                 ).read()
             ).decode("utf-8"),
@@ -629,6 +589,8 @@ async def createArc(request: Request):
     )
 
     # the arc.cwl
+    # currently disabled, as an cwl is no longer required
+    """
     arcData.append(
         {
             "action": "create",
@@ -636,6 +598,7 @@ async def createArc(request: Request):
             "content": None,
         }
     )
+    """
     # wrap the payload into json
     payload = json.dumps(
         {
@@ -644,27 +607,22 @@ async def createArc(request: Request):
             "actions": arcData,
         }
     )
-    logging.debug("Sent commit request to repo with payload " + str(payload))
+    logging.debug(f"Sent commit request to repo with payload {payload}")
     # send the data to the repo
     commitRequest = requests.post(
-        os.environ.get(target)
-        + "/api/v4/projects/"
-        + str(newArcJson["id"])
-        + "/repository/commits",
+        f"{os.environ.get(target)}/api/v4/projects/{newArcJson['id']}/repository/commits",
         headers=header,
         data=payload,
     )
     if not commitRequest.ok:
         logging.error(
-            "Couldn't commit ARC structure to the Hub! ERROR: "
-            + str(commitRequest.content)
+            f"Couldn't commit ARC structure to the Hub! ERROR: {commitRequest.content}"
         )
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Couldn't commit the arc to the repo! Error: "
-            + str(commitRequest.content),
+            detail=f"Couldn't commit the arc to the repo! Error: {commitRequest.content}",
         )
-    logging.info("Created new ARC with ID: " + str(newArcJson["id"]))
+    logging.info(f"Created new ARC with ID: {newArcJson['id']}")
 
     # write identifier into investigation file
     await arc_file(
@@ -687,11 +645,7 @@ async def createArc(request: Request):
         request=request,
         id=newArcJson["id"],
         repoPath="isa.investigation.xlsx",
-        filePath=os.environ.get("BACKEND_SAVE")
-        + data["target"]
-        + "-"
-        + str(newArcJson["id"])
-        + "/isa.investigation.xlsx",
+        filePath=f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{newArcJson['id']}/isa.investigation.xlsx",
         branch=newArcJson["default_branch"],
     )
 
@@ -718,7 +672,7 @@ async def createIsa(request: Request):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client not authorized to create new ISA! Cookies: " + str(request.cookies)
+            f"Client not authorized to create new ISA! Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
@@ -731,7 +685,7 @@ async def createIsa(request: Request):
         type = isaContent["type"]
         branch = isaContent["branch"]
     except:
-        logging.error("Missing Properties for isa! Data: " + str(isaContent))
+        logging.error(f"Missing Properties for isa! Data: {isaContent}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing Properties for the isa!",
@@ -749,12 +703,10 @@ async def createIsa(request: Request):
             isaData.append(
                 {
                     "action": "create",
-                    "file_path": type + "/" + identifier + "/isa.study.xlsx",
+                    "file_path": f"{type}/{identifier}/isa.study.xlsx",
                     "content": base64.b64encode(
                         open(
-                            os.environ.get("BACKEND_SAVE")
-                            + "/isa_files"
-                            + "/isa.study.xlsx",
+                            f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.study.xlsx",
                             "rb",
                         ).read()
                     ).decode("utf-8"),
@@ -766,12 +718,10 @@ async def createIsa(request: Request):
             isaData.append(
                 {
                     "action": "create",
-                    "file_path": type + "/" + identifier + "/isa.assay.xlsx",
+                    "file_path": f"{type}/{identifier}/isa.assay.xlsx",
                     "content": base64.b64encode(
                         open(
-                            os.environ.get("BACKEND_SAVE")
-                            + "/isa_files"
-                            + "/isa.assay.xlsx",
+                            f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.assay.xlsx",
                             "rb",
                         ).read()
                     ).decode("utf-8"),
@@ -789,7 +739,7 @@ async def createIsa(request: Request):
     isaData.append(
         {
             "action": "create",
-            "file_path": type + "/" + identifier + "/README.md",
+            "file_path": f"{type}/{identifier}/README.md",
             "content": None,
             "encoding": "base64",
         }
@@ -798,14 +748,14 @@ async def createIsa(request: Request):
     isaData.append(
         {
             "action": "create",
-            "file_path": type + "/" + identifier + "/" + "protocols" + "/.gitkeep",
+            "file_path": f"{type}/{identifier}/protocols/.gitkeep",
             "content": None,
         }
     )
     isaData.append(
         {
             "action": "create",
-            "file_path": type + "/" + identifier + "/" + "resources" + "/.gitkeep",
+            "file_path": f"{type}/{identifier}/resources/.gitkeep",
             "content": None,
         }
     )
@@ -814,35 +764,32 @@ async def createIsa(request: Request):
     payload = json.dumps(
         {
             "branch": branch,
-            "commit_message": "Added new " + type + " " + identifier,
+            "commit_message": f"Added new {type} {identifier}",
             "actions": isaData,
         }
     )
     logging.debug("Sent commit request with payload " + str(payload))
     # send the data to the repo
     commitRequest = requests.post(
-        os.environ.get(target) + "/api/v4/projects/" + str(id) + "/repository/commits",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
         headers=header,
         data=payload,
     )
     if not commitRequest.ok:
-        logging.error(
-            "Couldn't commit ISA to ARC! ERROR: " + str(commitRequest.content)
-        )
+        logging.error(f"Couldn't commit ISA to ARC! ERROR: {commitRequest.content}")
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Couldn't commit ISA structure to repo! Error: "
-            + str(commitRequest.content),
+            detail=f"Couldn't commit ISA structure to repo! Error: {commitRequest.content}",
         )
 
-    logging.info("Created " + identifier + " in " + type + " for ARC " + str(id))
+    logging.info(f"Created {identifier} in {type} for ARC {id}")
 
     # write identifier into file
     pathName = ""
     match type:
         case "studies":
             # first, get the file
-            pathName = type + "/" + identifier + "/isa.study.xlsx"
+            pathName = f"{type}/{identifier}/isa.study.xlsx"
             await arc_file(
                 id,
                 path=pathName,
@@ -862,7 +809,7 @@ async def createIsa(request: Request):
             )
         case "assays":
             # first, get the file
-            pathName = type + "/" + identifier + "/isa.assay.xlsx"
+            pathName = f"{type}/{identifier}/isa.assay.xlsx"
             await arc_file(
                 id,
                 path=pathName,
@@ -895,18 +842,15 @@ async def createIsa(request: Request):
         request=request,
         id=id,
         repoPath=pathName,
-        filePath=os.environ.get("BACKEND_SAVE")
-        + data["target"]
-        + "-"
-        + str(id)
-        + "/"
-        + pathName,
+        filePath=f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{pathName}",
     )
 
     return commitRequest.content
 
 
-@router.post("/uploadFile", summary="Uploads the given file to the repo")
+@router.post(
+    "/uploadFile", summary="Uploads the given file to the repo (with or without lfs)"
+)
 async def uploadFile(request: Request):
     # get the data from the body
     requestBody = await request.body()
@@ -920,89 +864,229 @@ async def uploadFile(request: Request):
         }
     except:
         logging.error(
-            "uploadFile Request couldn't be processed! Cookies: "
-            + str(request.cookies)
-            + " ; Body: "
-            + str(request.body)
+            f"uploadFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    # check if file already exists
-    fileHead = requests.head(
-        os.environ.get(target)
-        + "/api/v4/projects/"
-        + str(fileContent["id"])
-        + "/repository/files/"
-        # url encode the path
-        + quote(fileContent["path"], safe="") + "?ref=" + str(fileContent["branch"]),
-        headers=header,
-    )
-    # if file doesn't exist, upload file
-    if not fileHead.ok:
-        # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
-        payload = {
-            "branch": str(fileContent["branch"]),
-            # base64 encoding of the isa file
-            "content": fileContent["content"],
-            "commit_message": "Upload of new File " + str(fileContent["name"]),
-            "encoding": "base64",
+    # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
+
+    # open up a new hash
+    shasum = hashlib.new("sha256")
+
+    # when the lfs mark is set to true
+    if fileContent["lfs"]:
+        logging.debug("Uploading file with lfs...")
+
+        # create a new tempfile to store the data
+        tempFile = tempfile.SpooledTemporaryFile(max_size=1024 * 1024 * 100, mode="w+b")
+
+        # the filecontent is recieved as base64 and needs to be converted to bytes
+        asciiEncode = fileContent["content"].encode("ascii")
+        byteData = base64.b64decode(asciiEncode)
+
+        # write the data into the hash and tempfile
+        shasum.update(byteData)
+
+        tempFile.write(byteData)
+
+        # jump to file end and read the size
+        tempFile.seek(0, 2)
+
+        size = tempFile.tell()
+
+        # get the hash string
+        sha256 = shasum.hexdigest()
+
+        # build together the lfs upload json and header
+        lfsJson = {
+            "operation": "upload",
+            "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
+            "transfers": ["lfs-standalone-file", "basic"],
+            "ref": {"name": f"refs/heads/{fileContent['branch']}"},
+            "hash_algo": "sha256",
         }
 
-        # update the file on the gitlab
-        request = requests.post(
-            os.environ.get(target)
-            + "/api/v4/projects/"
-            + str(fileContent["id"])
-            + "/repository/files/"
-            + quote(fileContent["path"], safe=""),
-            data=json.dumps(payload),
+        lfsHeaders = {
+            "Accept": "application/vnd.git-lfs+json",
+            "Content-type": "application/vnd.git-lfs+json",
+        }
+
+        # construct the downloadurl for the file
+        downloadUrl = "".join(
+            [
+                "https://oauth2:",
+                data["gitlab"],
+                f"@{os.environ.get(target).split('//')[1]}/",
+                f"{fileContent['namespace']}.git/info/lfs/objects/batch",
+            ]
+        )
+
+        r = requests.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+
+        logging.debug("Posting download URL...")
+
+        result = r.json()
+
+        # test if there is a change in the file
+        testFail = False
+        try:
+            test = result["objects"][0]["actions"]
+
+        # if the file is the same, there will be no "actions" attribute
+        except:
+            testFail = True
+
+        # if the file is new or includes new content, upload it
+        if not testFail:
+            header_upload = result["objects"][0]["actions"]["upload"]["header"]
+            urlUpload = result["objects"][0]["actions"]["upload"]["href"]
+            header_upload.pop("Transfer-Encoding")
+            tempFile.seek(0, 0)
+            res = requests.put(
+                urlUpload,
+                headers=header_upload,
+                data=iter(lambda: tempFile.read(4096 * 4096), b""),
+            )
+
+        # build and upload the new pointer file to the arc
+        repoPath = quote(fileContent["path"], safe="")
+
+        postUrl = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{repoPath}"
+
+        pointerContent = (
+            f"version https://git-lfs.github.com/spec/v1\n"
+            f"oid sha256:{sha256}\nsize {size}\n"
+        )
+
+        headers = {
+            "Authorization": f"Bearer {data['gitlab']}",
+            "Content-Type": "application/json",
+        }
+
+        jsonData = {
+            "branch": "main",
+            "content": pointerContent,
+            "commit_message": "create a new lfs pointer file",
+        }
+
+        # check if file already exists
+        fileHead = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{repoPath}?ref={fileContent['branch']}",
             headers=header,
         )
-        statusCode = status.HTTP_201_CREATED
+        if fileHead.ok:
+            response = requests.put(postUrl, headers=headers, json=jsonData)
+        else:
+            response = requests.post(postUrl, headers=headers, json=jsonData)
+        logging.debug("Uploading pointer file to repo...")
+        # logging
+        logging.info(
+            f"Uploaded new File {fileContent['name']} to repo {fileContent['id']} on path: {fileContent['path']} with LFS"
+        )
 
-    # if file already exists, update the file
+        ## add filename to the gitattributes
+        url = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/.gitattributes/raw?ref={fileContent['branch']}"
+
+        newLine = f"{fileContent['name']} filter=lfs diff=lfs merge=lfs -text\n"
+
+        getResponse = requests.get(url, headers=headers)
+
+        postUrl = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote('.gitattributes', safe='')}"
+
+        # if .gitattributes doesn't exist, create a new one
+        if not getResponse.ok:
+            content = newLine
+
+            attributeData = {
+                "branch": fileContent["branch"],
+                "content": content,
+                "commit_message": "Create .gitattributes",
+            }
+            response = requests.post(
+                postUrl, headers=headers, data=json.dumps(attributeData)
+            )
+            logging.debug("Uploading .gitattributes to repo...")
+            return response.json()
+
+        # if filename is already inside the .gitattributes
+        elif not fileContent["name"] in getResponse.text:
+            content = getResponse.text + "\n" + newLine
+
+            attributeData = {
+                "branch": fileContent["branch"],
+                "content": content,
+                "commit_message": "Update .gitattributes",
+            }
+
+            response = requests.put(
+                postUrl, headers=headers, data=json.dumps(attributeData)
+            )
+            logging.debug("Updating .gitattributes...")
+            return response.json()
+        # if both cases should be false, do nothing and just return "File updated"
+        else:
+            return "File updated"
+
+    # if its a regular upload without git-lfs
     else:
-        payload = {
-            "branch": str(fileContent["branch"]),
-            # base64 encoding of the isa file
-            "content": fileContent["content"],
-            "commit_message": "Updating File " + str(fileContent["name"]),
-            "encoding": "base64",
-        }
-
-        # send the file to the gitlab
-        request = requests.put(
-            os.environ.get(target)
-            + "/api/v4/projects/"
-            + str(fileContent["id"])
-            + "/repository/files/"
-            + quote(fileContent["path"], safe=""),
-            data=json.dumps(payload),
+        # check if file already exists
+        fileHead = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote(fileContent['path'], safe='')}?ref={fileContent['branch']}",
             headers=header,
         )
-        statusCode = status.HTTP_200_OK
+        # if file doesn't exist, upload file
+        if not fileHead.ok:
+            # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
+            payload = {
+                "branch": str(fileContent["branch"]),
+                # base64 encoding of the isa file
+                "content": fileContent["content"],
+                "commit_message": f"Upload of new File {fileContent['name']}",
+                "encoding": "base64",
+            }
 
-    logging.debug("Uploading file to repo...")
-    if not request.ok:
-        logging.error("Couldn't upload to ARC! ERROR: " + str(request.content))
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Couldn't upload file to repo! Error: " + str(request.content),
+            # update the file on the gitlab
+            request = requests.post(
+                f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote(fileContent['path'], safe='')}",
+                data=json.dumps(payload),
+                headers=header,
+            )
+            statusCode = status.HTTP_201_CREATED
+
+        # if file already exists, update the file
+        else:
+            payload = {
+                "branch": str(fileContent["branch"]),
+                # base64 encoding of the isa file
+                "content": fileContent["content"],
+                "commit_message": f"Updating File {fileContent['name']}",
+                "encoding": "base64",
+            }
+
+            # send the file to the gitlab
+            request = requests.put(
+                f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote(fileContent['path'], safe='')}",
+                data=json.dumps(payload),
+                headers=header,
+            )
+            statusCode = status.HTTP_200_OK
+
+        logging.debug("Uploading file to repo...")
+        if not request.ok:
+            logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Couldn't upload file to repo! Error: {request.content}",
+            )
+
+        # logging
+        logging.info(
+            f"Uploaded new File {fileContent['name']} to repo {fileContent['id']} on path: {fileContent['path']}"
         )
 
-    # logging
-    logging.info(
-        "Uploaded new File "
-        + str(fileContent["name"])
-        + " to repo "
-        + str(fileContent["id"])
-        + " on path: "
-        + str(fileContent["path"])
-    )
-
-    response = Response(request.content, statusCode)
+        response = Response(request.content, statusCode)
 
     return response
 
@@ -1021,8 +1105,7 @@ async def getTemplates():
     # if swate is down, return error 500
     if not request.ok:
         logging.error(
-            "There was an error retrieving the swate templates! ERROR: "
-            + str(request.json())
+            f"There was an error retrieving the swate templates! ERROR: {request.json()}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1057,10 +1140,7 @@ async def getTemplate(id: str):
     # if swate is down (or the desired template somehow not available) return error 400
     if not request.ok:
         logging.error(
-            "There was an error retrieving the swate template with id "
-            + id
-            + " ! ERROR: "
-            + str(request.json())
+            f"There was an error retrieving the swate template with id {id} ! ERROR: {request.json()}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1070,7 +1150,7 @@ async def getTemplate(id: str):
     # return just the buildingBlocks part of the template (rest is already known)
     templateBlocks = request.json()["TemplateBuildingBlocks"]
 
-    logging.info("Sending template with id " + id + " to client!")
+    logging.info(f"Sending template with id {id} to client!")
 
     return templateBlocks
 
@@ -1105,9 +1185,7 @@ async def getTerms(
                 ),
                 timeout=10,
             )
-            logging.debug(
-                "Getting an extended list of terms for the input '" + input + "'!"
-            )
+            logging.debug(f"Getting an extended list of terms for the input '{input}'!")
         else:
             # default is an request call containing the parentTerm values
             request = requests.post(
@@ -1127,11 +1205,7 @@ async def getTerms(
                 timeout=7,
             )
             logging.debug(
-                "Getting an specific list of terms for the input '"
-                + input
-                + "' with parent '"
-                + parentName
-                + "'!"
+                f"Getting an specific list of terms for the input '{input}' with parent '{parentName}'!"
             )
     # if there is a timeout, respond with an error 504
     except requests.exceptions.Timeout:
@@ -1144,17 +1218,14 @@ async def getTerms(
     # if there is a different kind of error, return error 400
     except:
         logging.error(
-            "There was an error retrieving the terms for '"
-            + input
-            + "'! ERROR: "
-            + str(request.json())
+            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your request couldn't be processed!",
         )
 
-    logging.info("Sent a list of terms for '" + input + "' to client!")
+    logging.info(f"Sent a list of terms for '{input}' to client!")
     # return the list of terms found for the given input
     return request.json()
 
@@ -1183,7 +1254,7 @@ async def getTermSuggestionsByParentTerm(
             timeout=7,
         )
         logging.debug(
-            "Getting list of suggestion terms for the parent '" + parentName + "'!"
+            f"Getting list of suggestion terms for the parent '{parentName}'!"
         )
     # if there is a timeout, respond with error 504
     except requests.exceptions.Timeout:
@@ -1196,16 +1267,13 @@ async def getTermSuggestionsByParentTerm(
     # if there is a different kind of error, return error 400
     except:
         logging.error(
-            "There was an error retrieving the terms for '"
-            + parentName
-            + "'! ERROR: "
-            + str(request.json())
+            f"There was an error retrieving the terms for '{parentName}'! ERROR: {request.json()}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your request couldn't be processed!",
         )
-    logging.info("Sent a list of terms for '" + parentName + "' to client!")
+    logging.info(f"Sent a list of terms for '{parentName}' to client!")
     # return the list of terms found for the given input
     return request.json()
 
@@ -1233,7 +1301,7 @@ async def getTermSuggestions(request: Request, input: str, n=20):
             timeout=7,
         )
 
-        logging.debug("Getting list of suggestion terms for the input '" + input + "'!")
+        logging.debug(f"Getting list of suggestion terms for the input '{input}'!")
     # if there is a timeout, respond with an error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
@@ -1245,16 +1313,13 @@ async def getTermSuggestions(request: Request, input: str, n=20):
     # if there is a different kind of error, return error 400
     except:
         logging.error(
-            "There was an error retrieving the terms for '"
-            + input
-            + "'! ERROR: "
-            + str(request.json())
+            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}"
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your request couldn't be processed!",
         )
-    logging.info("Sent a list of terms for '" + input + "' to client!")
+    logging.info(f"Sent a list of terms for '{input}' to client!")
     # return the list of terms found for the given input
     return request.json()
 
@@ -1291,9 +1356,8 @@ async def saveSheet(request: Request):
     # get the file in the backend
     await arc_file(projectId, path, request)
 
-    pathName = (
-        os.environ.get("BACKEND_SAVE") + target + "-" + str(projectId) + "/" + path
-    )
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{projectId}/{path}"
+
     # if no sheet name is given, name it "sheet1"
     if name == "":
         name = "sheet1"
@@ -1321,7 +1385,7 @@ async def getSheets(request: Request, path: str, id, branch="main"):
             "Content-Type": "application/json",
         }
     except:
-        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1331,9 +1395,7 @@ async def getSheets(request: Request, path: str, id, branch="main"):
     await arc_file(id, path, request, branch)
 
     # construct path to the backend
-    pathName = (
-        os.environ.get("BACKEND_SAVE") + data["target"] + "-" + str(id) + "/" + path
-    )
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{path}"
 
     # read out the list of swate sheets
     sheets = getSwateSheets(pathName, getIsaType(path))
@@ -1352,35 +1414,28 @@ async def getChanges(request: Request, id: int):
         header = {"Authorization": "Bearer " + data["gitlab"]}
         target = getTarget(data["target"])
     except:
-        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
         )
 
     commits = requests.get(
-        os.environ.get(target)
-        + "/api/v4/projects/"
-        + str(id)
-        + "/repository/commits?per_page=100",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100",
         headers=header,
     )
 
     if not commits.ok:
-        logging.error(
-            "Commits not found! ID: " + str(id) + " ; ERROR: " + str(commits.content)
-        )
+        logging.error(f"Commits not found! ID: {id} ; ERROR: {commits.content}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Commits not found! Error: "
-            + str(commits.content)
-            + "! Try to login again!",
+            detail=f"Commits not found! Error: {commits.content}! Try to login again!",
         )
     commitJson = commits.json()
 
     response = []
     for entry in commitJson:
-        response.append(entry["authored_date"].split("T")[0] + ": " + entry["title"])
+        response.append(f"{entry['authored_date'].split('T')[0]}: {entry['title']}")
 
     return response
 
@@ -1394,7 +1449,7 @@ async def getStudies(request: Request, id: int):
         # request arc studies
         studiesJson = await arc_path(id=id, request=request, path="studies")
     except:
-        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1416,7 +1471,7 @@ async def getAssays(request: Request, id: int):
         # request arc studies
         assaysJson = await arc_path(id=id, request=request, path="assays")
     except:
-        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1439,7 +1494,7 @@ async def syncAssay(request: Request):
         target = data["target"]
 
     except:
-        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1454,7 +1509,7 @@ async def syncAssay(request: Request):
         branch = fileContent["branch"]
 
     except:
-        logging.warning("Missing Data for Assay sync! Data: " + str(fileContent))
+        logging.warning(f"Missing Data for Assay sync! Data: {fileContent}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
@@ -1463,12 +1518,9 @@ async def syncAssay(request: Request):
     await arc_file(id=id, path=pathToAssay, request=request, branch=branch)
     await arc_file(id, pathToStudy, request, branch)
 
-    assayPath = (
-        os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + pathToAssay
-    )
-    studyPath = (
-        os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + pathToStudy
-    )
+    assayPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToAssay}"
+    studyPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToStudy}"
+
     # append the assay to the study
     appendAssay(pathToAssay=assayPath, pathToStudy=studyPath, assayName=assayName)
     logging.debug("committing file to repo...")
@@ -1480,19 +1532,18 @@ async def syncAssay(request: Request):
             pathToStudy,
             studyPath,
             branch,
-            ": synced " + pathToAssay + " to " + pathToStudy,
+            f": synced {pathToAssay} to {pathToStudy}",
         )
     except:
         logging.warning(
-            "Client is not authorized to commit to ARC! Cookies: "
-            + str(request.cookies)
+            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="No authorized session cookie found",
         )
 
-    logging.info("Sent file " + pathToStudy + " to ARC " + str(id))
+    logging.info(f"Sent file {pathToStudy} to ARC {id}")
     # frontend gets the response from the commit post back
     return str(commitResponse)
 
@@ -1507,7 +1558,7 @@ async def syncStudy(request: Request):
         target = data["target"]
 
     except:
-        logging.warning("No authorized Cookie found! Cookies: " + str(request.cookies))
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1521,7 +1572,7 @@ async def syncStudy(request: Request):
         branch = fileContent["branch"]
 
     except:
-        logging.warning("Missing Data for Assay sync! Data: " + str(fileContent))
+        logging.warning(f"Missing Data for Assay sync! Data: {fileContent}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
@@ -1530,16 +1581,8 @@ async def syncStudy(request: Request):
     await arc_file(id=id, path="isa.investigation.xlsx", request=request, branch=branch)
     await arc_file(id, pathToStudy, request, branch)
 
-    investPath = (
-        os.environ.get("BACKEND_SAVE")
-        + target
-        + "-"
-        + str(id)
-        + "/isa.investigation.xlsx"
-    )
-    studyPath = (
-        os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + pathToStudy
-    )
+    investPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/isa.investigation.xlsx"
+    studyPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToStudy}"
     # append the study to the investigation file
     appendStudy(pathToInvest=investPath, pathToStudy=studyPath, studyName=studyName)
     logging.debug("committing file to repo...")
@@ -1551,18 +1594,17 @@ async def syncStudy(request: Request):
             "isa.investigation.xlsx",
             investPath,
             branch,
-            ": synced " + pathToStudy + " to ISA investigation",
+            f": synced {pathToStudy} to ISA investigation",
         )
     except:
         logging.warning(
-            "Client is not authorized to commit to ARC! Cookies: "
-            + str(request.cookies)
+            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="No authorized session cookie found",
         )
 
-    logging.info("Sent file isa.investigation.xlsx to ARC " + str(id))
+    logging.info(f"Sent file isa.investigation.xlsx to ARC {id}")
     # frontend gets a simple 'success' as response
     return str(commitResponse)

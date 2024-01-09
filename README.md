@@ -33,5 +33,6 @@ For production run:
 uvicorn main:app
 ```
 
-To test the backend, browse to: [localhost](http://localhost:8000/arcmanager/api/v1/docs)
+To test the backend, browse to: [localhost](http://localhost:8000/arcmanager/api/v1/docs).
+
 Most requests require you to be [logged in](http://localhost:8000/arcmanager/api/v1/auth/login?datahub=tuebingen).
