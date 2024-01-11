@@ -321,7 +321,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         if path.endswith((".txt", ".md", ".html", ".xml")):
             # sanitize content
             # decode the file
-            decoded = base64.b64decode(arcFile.json()["content"]).decode("ascii")
+            decoded = base64.b64decode(arcFile.json()["content"]).decode("utf-8")
 
             # remove script and iframe tags
             decoded = decoded.replace("<script>", "---here was a script tag---")
@@ -874,7 +874,31 @@ async def uploadFile(request: Request):
 
     # open up a new hash
     shasum = hashlib.new("sha256")
-
+    
+    """
+    f = open("test1.txt", "a")
+    f.write(str(fileContent["chunk"])+": " +fileContent["content"]+"\n")
+    
+    f.close()
+    
+    f = open("test1.txt", "r")
+    lineCount=len(f.readlines())
+    
+    f.close()
+    if fileContent["chunkNumber"] == lineCount:
+        print("File was fully send")
+        file = open("test1.txt", "r")
+        lines = file.readlines()
+        fullData = bytes()
+        for line in lines:
+            asciiEncode = line.strip().encode("ascii")
+            byteData = base64.b64decode(asciiEncode)
+            fullData+=byteData
+        f = open("test2.txt", "a")
+        f.write(str(fullData))
+        f.close()
+        
+    """
     # when the lfs mark is set to true
     if fileContent["lfs"]:
         logging.debug("Uploading file with lfs...")
@@ -989,7 +1013,7 @@ async def uploadFile(request: Request):
         ## add filename to the gitattributes
         url = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/.gitattributes/raw?ref={fileContent['branch']}"
 
-        newLine = f"{fileContent['name']} filter=lfs diff=lfs merge=lfs -text\n"
+        newLine = f"{fileContent['path']} filter=lfs diff=lfs merge=lfs -text\n"
 
         getResponse = requests.get(url, headers=headers)
 

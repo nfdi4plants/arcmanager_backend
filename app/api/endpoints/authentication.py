@@ -46,20 +46,20 @@ oauth.register(
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    # redirect_uri = (
-    #    "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
-    # )
     redirect_uri = (
-        "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
+        "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
     )
+    #redirect_uri = (
+    #    "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    #)
     try:
         # construct authorization url for requested datahub and redirect
         if datahub == "dev":
             return await oauth.dev.authorize_redirect(request, redirect_uri)
         elif datahub == "tübingen":
             # change uri with 'ü' to 'ue'
-            # redirect_uri = "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=tuebingen"
-            redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+            redirect_uri = "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+            #redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
             return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
         elif datahub == "freiburg":
             return await oauth.freiburg.authorize_redirect(request, redirect_uri)
@@ -72,8 +72,8 @@ async def login(request: Request, datahub: str):
 
     # if authentication fails (e.g. due to a timeout), then return back to the frontend containing an error in the cookies
     except:
-        # response = RedirectResponse("http://localhost:5173")
-        response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
+        response = RedirectResponse("http://localhost:5173")
+        #response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
         response.set_cookie("error", "DataHUB not available")
         return response
 
@@ -84,8 +84,8 @@ async def login(request: Request, datahub: str):
     summary="Redirection after successful user login and creation of server-side user session",
 )
 async def callback(request: Request, datahub: str):
-    # response = RedirectResponse("http://localhost:5173")
-    response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
+    response = RedirectResponse("http://localhost:5173")
+    #response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
 
     try:
         if datahub == "dev":
