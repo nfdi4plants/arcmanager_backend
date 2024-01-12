@@ -740,7 +740,7 @@ async def createIsa(request: Request):
             isaData.append(
                 {
                     "action": "create",
-                    "file_path": f"{type}/{identifier}/data/.gitkeep",
+                    "file_path": f"{type}/{identifier}/dataset/.gitkeep",
                     "content": None,
                 }
             )
