@@ -713,6 +713,14 @@ async def createIsa(request: Request):
                     "encoding": "base64",
                 }
             )
+            
+            isaData.append(
+                {
+                    "action": "create",
+                    "file_path": f"{type}/{identifier}/resources/.gitkeep",
+                    "content": None,
+                }
+            )
         # if its an assay, add a copy of an empty assay file from the backend
         case "assays":
             isaData.append(
@@ -726,6 +734,14 @@ async def createIsa(request: Request):
                         ).read()
                     ).decode("utf-8"),
                     "encoding": "base64",
+                }
+            )
+            
+            isaData.append(
+                {
+                    "action": "create",
+                    "file_path": f"{type}/{identifier}/data/.gitkeep",
+                    "content": None,
                 }
             )
         # if its somehow neither an assay or study to be created
@@ -749,13 +765,6 @@ async def createIsa(request: Request):
         {
             "action": "create",
             "file_path": f"{type}/{identifier}/protocols/.gitkeep",
-            "content": None,
-        }
-    )
-    isaData.append(
-        {
-            "action": "create",
-            "file_path": f"{type}/{identifier}/resources/.gitkeep",
             "content": None,
         }
     )
