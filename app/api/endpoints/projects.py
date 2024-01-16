@@ -862,11 +862,11 @@ async def createIsa(request: Request):
     "/uploadFile", summary="Uploads the given file to the repo (with or without lfs)"
 )
 async def uploadFile(request: Request):
-    # get the data from the body
-    requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
-        fileContent = json.loads(requestBody)
+        # get the data from the body
+        requestForm = await request.form()
+
         target = getTarget(data["target"])
         header = {
             "Authorization": "Bearer " + data["gitlab"],
@@ -880,59 +880,52 @@ async def uploadFile(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
+    chunkNumber = int(requestForm.get("chunkNumber"))
+    totalChunks = int(requestForm.get("totalChunks"))
 
-    # open up a new hash
-    shasum = hashlib.new("sha256")
-    try:
-        os.remove(os.environ.get("BACKEND_SAVE") + "cache/" + fileContent["name"])
-        os.remove(
-            os.environ.get("BACKEND_SAVE") + "cache/" + f"{fileContent['name']}.txt"
-        )
-    except:
-        pass
-
+    content = await requestForm.get("file").read()
     f = open(
-        os.environ.get("BACKEND_SAVE") + "cache/" + f"{fileContent['name']}.txt", "a"
+        os.environ.get("BACKEND_SAVE")
+        + "cache/"
+        + requestForm.get("name")
+        + "."
+        + requestForm.get("chunkNumber"),
+        "wb",
     )
-    f.write(str(fileContent["chunk"]) + "###" + fileContent["content"] + "###\n")
-
+    f.write(content)
     f.close()
+    # fullData holds the final file data
+    fullData = bytes()
+    if chunkNumber + 1 == totalChunks:
+        for chunk in range(totalChunks):
+            f = open(
+                os.environ.get("BACKEND_SAVE")
+                + "cache/"
+                + requestForm.get("name")
+                + "."
+                + str(chunk),
+                "rb",
+            )
+            fullData += f.read()
+            f.close()
 
-    f = open(
-        os.environ.get("BACKEND_SAVE") + "cache/" + f"{fileContent['name']}.txt", "r"
-    )
-    lineCount = len(f.readlines())
+        # clear the chunks
+        try:
+            for chunk in range(totalChunks):
+                os.remove(
+                    os.environ.get("BACKEND_SAVE")
+                    + "cache/"
+                    + f"{requestForm.get('name')}.{chunk}"
+                )
+        except:
+            pass
 
-    f.close()
-    if fileContent["chunkNumber"] == lineCount:
-        print("File was fully send")
-        cache = {}
-        file = open(
-            os.environ.get("BACKEND_SAVE") + "cache/" + f"{fileContent['name']}.txt",
-            "r",
-        )
-        lines = file.readlines()
-        fullData = bytes()
-        for line in lines:
-            lineParts = line.strip().split("###")
-            asciiEncode = lineParts[1].encode("ascii")
-            byteData = base64.b64decode(asciiEncode)
-            cache[str(lineParts[0])] = byteData
+        # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
 
-        file.close()
-        counter = 0
-        for entry in cache.items():
-            fullData += cache[str(counter)]
-            counter += 1
+        # open up a new hash
+        shasum = hashlib.new("sha256")
 
-        f = open(
-            os.environ.get("BACKEND_SAVE") + "cache/" + str(fileContent["name"]), "wb"
-        )
-        f.write(fullData)
-        f.close()
-
-        if fileContent["lfs"]:
+        if requestForm.get("lfs") == "true":
             logging.debug("Uploading file with lfs...")
 
             # create a new tempfile to store the data
@@ -958,7 +951,7 @@ async def uploadFile(request: Request):
                 "operation": "upload",
                 "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
                 "transfers": ["lfs-standalone-file", "basic"],
-                "ref": {"name": f"refs/heads/{fileContent['branch']}"},
+                "ref": {"name": f"refs/heads/{requestForm.get('branch')}"},
                 "hash_algo": "sha256",
             }
 
@@ -973,15 +966,17 @@ async def uploadFile(request: Request):
                     "https://oauth2:",
                     data["gitlab"],
                     f"@{os.environ.get(target).split('//')[1]}/",
-                    f"{fileContent['namespace']}.git/info/lfs/objects/batch",
+                    f"{requestForm.get('namespace')}.git/info/lfs/objects/batch",
                 ]
             )
 
             r = requests.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
 
             logging.debug("Posting download URL...")
-
-            result = r.json()
+            try:
+                result = r.json()
+            except:
+                return "Error: " + r.content
 
             # test if there is a change in the file
             testFail = False
@@ -1005,9 +1000,9 @@ async def uploadFile(request: Request):
                 )
 
             # build and upload the new pointer file to the arc
-            repoPath = quote(fileContent["path"], safe="")
+            repoPath = quote(requestForm.get("path"), safe="")
 
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{repoPath}"
+            postUrl = f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{repoPath}"
 
             pointerContent = (
                 f"version https://git-lfs.github.com/spec/v1\n"
@@ -1027,7 +1022,7 @@ async def uploadFile(request: Request):
 
             # check if file already exists
             fileHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{repoPath}?ref={fileContent['branch']}",
+                f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{repoPath}?ref={requestForm.get('branch')}",
                 headers=header,
             )
             if fileHead.ok:
@@ -1037,35 +1032,24 @@ async def uploadFile(request: Request):
             logging.debug("Uploading pointer file to repo...")
             # logging
             logging.info(
-                f"Uploaded new File {fileContent['name']} to repo {fileContent['id']} on path: {fileContent['path']} with LFS"
+                f"Uploaded new File {requestForm.get('name')} to repo {requestForm.get('id')} on path: {requestForm.get('branch')} with LFS"
             )
 
-            try:
-                os.remove(
-                    os.environ.get("BACKEND_SAVE") + "cache/" + fileContent["name"]
-                )
-                os.remove(
-                    os.environ.get("BACKEND_SAVE")
-                    + "cache/"
-                    + f"{fileContent['name']}.txt"
-                )
-            except:
-                pass
             ## add filename to the gitattributes
-            url = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/.gitattributes/raw?ref={fileContent['branch']}"
+            url = f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/.gitattributes/raw?ref={requestForm.get('branch')}"
 
-            newLine = f"{fileContent['path']} filter=lfs diff=lfs merge=lfs -text\n"
+            newLine = f"{requestForm.get('path')} filter=lfs diff=lfs merge=lfs -text\n"
 
             getResponse = requests.get(url, headers=headers)
 
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote('.gitattributes', safe='')}"
+            postUrl = f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote('.gitattributes', safe='')}"
 
             # if .gitattributes doesn't exist, create a new one
             if not getResponse.ok:
                 content = newLine
 
                 attributeData = {
-                    "branch": fileContent["branch"],
+                    "branch": requestForm.get("branch"),
                     "content": content,
                     "commit_message": "Create .gitattributes",
                 }
@@ -1073,14 +1057,14 @@ async def uploadFile(request: Request):
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
                 logging.debug("Uploading .gitattributes to repo...")
-                return f"100%, {response.json()}"
+                return response.json()
 
             # if filename is already inside the .gitattributes
-            elif not fileContent["name"] in getResponse.text:
+            elif not requestForm.get("name") in getResponse.text:
                 content = getResponse.text + "\n" + newLine
 
                 attributeData = {
-                    "branch": fileContent["branch"],
+                    "branch": requestForm.get("branch"),
                     "content": content,
                     "commit_message": "Update .gitattributes",
                 }
@@ -1089,32 +1073,32 @@ async def uploadFile(request: Request):
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
                 logging.debug("Updating .gitattributes...")
-                return f"100%, {response.json()}"
+                return response.json()
             # if both cases should be false, do nothing and just return "File updated"
             else:
-                return "100%, File updated"
+                return "File updated"
 
         # if its a regular upload without git-lfs
         else:
             # check if file already exists
             fileHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote(fileContent['path'], safe='')}?ref={fileContent['branch']}",
+                f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}?ref={requestForm.get('branch')}",
                 headers=header,
             )
             # if file doesn't exist, upload file
             if not fileHead.ok:
                 # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
                 payload = {
-                    "branch": str(fileContent["branch"]),
+                    "branch": str(requestForm.get("branch")),
                     # base64 encoding of the isa file
                     "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Upload of new File {fileContent['name']}",
+                    "commit_message": f"Upload of new File {requestForm.get('name')}",
                     "encoding": "base64",
                 }
 
                 # update the file on the gitlab
                 request = requests.post(
-                    f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote(fileContent['path'], safe='')}",
+                    f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}",
                     data=json.dumps(payload),
                     headers=header,
                 )
@@ -1123,16 +1107,16 @@ async def uploadFile(request: Request):
             # if file already exists, update the file
             else:
                 payload = {
-                    "branch": str(fileContent["branch"]),
+                    "branch": str(requestForm.get("branch")),
                     # base64 encoding of the isa file
                     "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Updating File {fileContent['name']}",
+                    "commit_message": f"Updating File {requestForm.get('name')}",
                     "encoding": "base64",
                 }
 
                 # send the file to the gitlab
                 request = requests.put(
-                    f"{os.environ.get(target)}/api/v4/projects/{fileContent['id']}/repository/files/{quote(fileContent['path'], safe='')}",
+                    f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}",
                     data=json.dumps(payload),
                     headers=header,
                 )
@@ -1148,27 +1132,12 @@ async def uploadFile(request: Request):
 
             # logging
             logging.info(
-                f"Uploaded new File {fileContent['name']} to repo {fileContent['id']} on path: {fileContent['path']}"
+                f"Uploaded new File {requestForm.get('name')} to repo {requestForm.get('id')} on path: {requestForm.get('path')}"
             )
 
-            try:
-                os.remove(
-                    os.environ.get("BACKEND_SAVE") + "cache/" + fileContent["name"]
-                )
-                os.remove(
-                    os.environ.get("BACKEND_SAVE")
-                    + "cache/"
-                    + f"{fileContent['name']}.txt"
-                )
-            except:
-                pass
-
-            response = Response(f"100%, {request.content}", statusCode)
+            response = Response(request.content, statusCode)
 
             return response
-
-    else:
-        return f"{lineCount / fileContent['chunkNumber']:.0%}"
 
 
 @router.get(
