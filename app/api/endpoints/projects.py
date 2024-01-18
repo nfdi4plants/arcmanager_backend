@@ -880,8 +880,12 @@ async def uploadFile(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    chunkNumber = int(requestForm.get("chunkNumber"))
-    totalChunks = int(requestForm.get("totalChunks"))
+    try:
+        chunkNumber = int(requestForm.get("chunkNumber"))
+        totalChunks = int(requestForm.get("totalChunks"))
+    except:
+        chunkNumber = 0
+        totalChunks = 1
 
     content = await requestForm.get("file").read()
     f = open(
@@ -889,7 +893,7 @@ async def uploadFile(request: Request):
         + "cache/"
         + requestForm.get("name")
         + "."
-        + requestForm.get("chunkNumber"),
+        + str(chunkNumber),
         "wb",
     )
     f.write(content)
