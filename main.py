@@ -8,8 +8,22 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
 import requests.packages.urllib3.util.connection
 
+description = """
+The **ARCmanager** can be found [here](https://nfdi4plants.de/arcmanager/app/index.html)
+
+The code for the front- and backend can be found on the DataPLANT Github here:
+
+[Frontend](https://github.com/nfdi4plants/arcmanager_frontend)
+[Backend](https://github.com/nfdi4plants/arcmanager_backend)
+"""
+
 app = FastAPI(
-    docs_url="/arcmanager/api/v1/docs", openapi_url="/arcmanager/api/v1/openapi.json"
+    title="ARCmanager API",
+    summary="ARCmanager API enables you to read out and write to your ARC in any datahub",
+    docs_url="/arcmanager/api/v1/docs",
+    openapi_url="/arcmanager/api/v1/openapi.json",
+    version="0.4.3",
+    description=description,
 )
 
 

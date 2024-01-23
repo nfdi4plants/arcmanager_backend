@@ -14,7 +14,16 @@ from fastapi.encoders import jsonable_encoder
 # gitlab api commits need base64 encoded content
 import base64
 
+import json
+import os
+import requests
 import jwt
+
+from starlette.status import (
+    HTTP_200_OK,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_500_INTERNAL_SERVER_ERROR,
+)
 
 import logging
 
@@ -22,7 +31,7 @@ import logging
 from urllib.parse import quote
 
 # functions to read and write isa files
-from app.api.middlewares.excelIO import (
+from app.api.IO.excelIO import (
     readIsaFile,
     getIsaType,
     writeIsaFile,
@@ -32,10 +41,8 @@ from app.api.middlewares.excelIO import (
     appendStudy,
 )
 
-from app.api.middlewares.oauth_authentication import *
 from app.models.gitlab.projects import *
 from app.models.gitlab.arc import *
-from app.models.keycloak.access_token import *
 from app.models.gitlab.commit import *
 from app.models.swate.template import *
 
@@ -964,7 +971,7 @@ async def uploadFile(request: Request):
                 "Content-type": "application/vnd.git-lfs+json",
             }
 
-            # construct the downloadurl for the file
+            # construct the download url for the file
             downloadUrl = "".join(
                 [
                     "https://oauth2:",
@@ -1063,7 +1070,7 @@ async def uploadFile(request: Request):
                 logging.debug("Uploading .gitattributes to repo...")
                 return response.json()
 
-            # if filename is already inside the .gitattributes
+            # if filename is not inside the .gitattributes, add it
             elif not requestForm.get("name") in getResponse.text:
                 content = getResponse.text + "\n" + newLine
 
@@ -1078,7 +1085,7 @@ async def uploadFile(request: Request):
                 )
                 logging.debug("Updating .gitattributes...")
                 return response.json()
-            # if both cases should be false, do nothing and just return "File updated"
+            # if filename already exists, do nothing and just return "File updated"
             else:
                 return "File updated"
 
@@ -1142,6 +1149,8 @@ async def uploadFile(request: Request):
             response = Response(request.content, statusCode)
 
             return response
+    else:
+        return f"Received chunk {chunkNumber} of {totalChunks} for file {requestForm.get('name')}"
 
 
 @router.get(
