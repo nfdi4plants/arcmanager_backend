@@ -1040,6 +1040,14 @@ async def uploadFile(request: Request):
                 response = requests.put(postUrl, headers=headers, json=jsonData)
             else:
                 response = requests.post(postUrl, headers=headers, json=jsonData)
+
+            if not response.ok:
+                logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Couldn't upload file to repo! Error: {response.content}",
+                )
+
             logging.debug("Uploading pointer file to repo...")
             # logging
             logging.info(
@@ -1150,7 +1158,7 @@ async def uploadFile(request: Request):
 
             return response
     else:
-        return f"Received chunk {chunkNumber} of {totalChunks} for file {requestForm.get('name')}"
+        return f"Received chunk {chunkNumber+1} of {totalChunks} for file {requestForm.get('name')}"
 
 
 @router.get(
@@ -1670,3 +1678,259 @@ async def syncStudy(request: Request):
     logging.info(f"Sent file isa.investigation.xlsx to ARC {id}")
     # frontend gets a simple 'success' as response
     return str(commitResponse)
+
+
+# deletes the specific file on the given path
+@router.delete(
+    "/deleteFile",
+    summary="Deletes the file on the given path",
+    status_code=status.HTTP_200_OK,
+)
+async def deleteFile(id: int, path: str, request: Request, branch="main"):
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+            "Content-Type": "application/json",
+        }
+        target = getTarget(data["target"])
+    except:
+        logging.warning(
+            f"Client is not authorized to delete the file! Cookies: {request.cookies}"
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized to delete this file",
+        )
+
+    payload = {"branch": branch, "commit_message": "Delete file " + path}
+
+    deletion = requests.delete(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+        headers=header,
+        data=json.dumps(payload),
+    )
+
+    if not deletion.ok:
+        logging.error(f"Couldn't delete file {path} ! ERROR: {deletion.content}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't delete file on repo! Error: {deletion.content}",
+        )
+    logging.info(f"Deleted file on path: {path}")
+    return "Successfully deleted the file!"
+
+
+# deletes the specific folder on the given path (including all files)
+@router.delete(
+    "/deleteFolder",
+    summary="Deletes the entire folder on the given path",
+    status_code=status.HTTP_200_OK,
+)
+async def deleteFolder(id: int, path: str, request: Request, branch="main"):
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+            "Content-Type": "application/json",
+        }
+        target = getTarget(data["target"])
+    except:
+        logging.warning(
+            f"Client is not authorized to delete the file! Cookies: {request.cookies}"
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized to delete this file",
+        )
+
+    # get the content of the folder
+    folder = await arc_path(id, request, path)
+
+    # list of all files to be deleted
+    payload = []
+
+    # async function filling the payload with all files recursively found in the folder
+    async def prepareJson(folder: Arc):
+        for entry in folder.Arc:
+            # if its a file, add it to the list
+            if entry.type == "blob":
+                payload.append({"action": "delete", "file_path": entry.path})
+
+            # if its a folder, search the folder for any file
+            elif entry.type == "tree":
+                await prepareJson(await arc_path(id, request, entry.path))
+
+            # this should never be the case, so pass along anything here
+            else:
+                pass
+
+    # start searching and filling the payload
+    await prepareJson(folder)
+
+    print(payload)
+
+    # the final json containing all files to be deleted
+    requestData = {
+        "branch": branch,
+        "commit_message": "Deleting all content from " + path,
+        "actions": payload,
+    }
+
+    deleteRequest = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+        headers=header,
+        data=json.dumps(requestData),
+    )
+
+    if not deleteRequest.ok:
+        logging.error(f"Couldn't delete folder {path} ! ERROR: {deleteRequest.content}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't delete folder on repo! Error: {deleteRequest.content}",
+        )
+    logging.info(f"Deleted folder on path: {path}")
+    return "Successfully deleted the folder!"
+
+
+# creates a folder on the given path
+@router.post(
+    "/createFolder",
+    summary="Creates a folder on the given path",
+    status_code=status.HTTP_201_CREATED,
+)
+async def createFolder(request: Request):
+    # get the data from the body
+    requestBody = await request.body()
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+            "Content-Type": "application/json",
+        }
+        folder = json.loads(requestBody)
+
+        target = getTarget(data["target"])
+    except:
+        logging.warning(
+            f"Client not authorized to create new folder! Cookies: {request.cookies}"
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to create new folder",
+        )
+
+    # load the properties
+    try:
+        identifier = folder["identifier"]
+        # the identifier must not contain white space
+        identifier = identifier.replace(" ", "_")
+        path = folder["path"]
+        if path == "":
+            path = identifier
+        else:
+            path = f"{path}/{identifier}"
+        id = folder["id"]
+        payload = {
+            "branch": folder["branch"],
+            "content": "",
+            "commit_message": "Created new folder " + path,
+        }
+        path += "/.gitkeep"
+    except:
+        logging.error(f"Missing Properties for folder! Data: {folder}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Properties for the folder!",
+        )
+
+    request = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+        headers=header,
+        data=json.dumps(payload),
+    )
+
+    if not request.ok:
+        logging.error(f"Couldn't create folder {path} ! ERROR: {request.content}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't create folder on repo! Error: {request.content}",
+        )
+    logging.info(f"Created folder on path: {path}")
+    return request.content
+
+
+# get a list of all users for the datahub
+@router.get("/getUser", summary="Get a list of all users")
+async def getUser(request: Request):
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {"Authorization": "Bearer " + data["gitlab"]}
+        target = getTarget(data["target"])
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    userList = []
+    users = requests.head(
+        f"{os.environ.get(target)}/api/v4/users?per_page=100",
+        headers=header,
+    )
+    for x in range(int(users.headers["x-total-pages"])):
+        users = requests.get(
+            f"{os.environ.get(target)}/api/v4/users?per_page=100&without_project_bots=true&page="
+            + str(x + 1),
+            headers=header,
+        )
+        userList += users.json()
+
+    return userList
+
+
+@router.post("/addUser", summary="Adds a user to the project")
+async def addUser(request: Request):
+    # get the data from the body
+    requestBody = await request.body()
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        userData = json.loads(requestBody)
+        target = getTarget(data["target"])
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    # get the id and name of the user
+    arcId = userData["id"]
+    name = userData["username"]
+    userId = userData["userId"]
+
+    # look if the user role is set, else set it to 30 (developer)
+    try:
+        userRole = userData["role"]
+    except:
+        userRole = 30
+
+    addRequest = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{arcId}/members",
+        headers=header,
+        data=f"user_id={userId}&access_level={userRole}",
+    )
+    if not addRequest.ok:
+        logging.error(f"Couldn't add user {name} ! ERROR: {addRequest.content}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't add user to project! Error: {addRequest.content}",
+        )
+    logging.info(f"Added user to project: {arcId}")
+
+    return f"The user {name} was added successfully!"
