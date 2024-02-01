@@ -1768,8 +1768,6 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
     # start searching and filling the payload
     await prepareJson(folder)
 
-    print(payload)
-
     # the final json containing all files to be deleted
     requestData = {
         "branch": branch,
@@ -1887,10 +1885,15 @@ async def getUser(request: Request):
         )
         userList += users.json()
 
+    logging.info(f"Sent list of all users of the datahub!")
     return userList
 
 
-@router.post("/addUser", summary="Adds a user to the project")
+@router.post(
+    "/addUser",
+    summary="Adds a user to the project",
+    status_code=status.HTTP_201_CREATED,
+)
 async def addUser(request: Request):
     # get the data from the body
     requestBody = await request.body()
@@ -1931,6 +1934,99 @@ async def addUser(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't add user to project! Error: {addRequest.content}",
         )
-    logging.info(f"Added user to project: {arcId}")
+    logging.info(f"Added user {name} to project {arcId} with role {userRole}")
 
     return f"The user {name} was added successfully!"
+
+
+# get a list of all users for the specific Arc
+@router.get("/getArcUser", summary="Get a list of all members of the arc")
+async def getArcUser(request: Request, id: int):
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {"Authorization": "Bearer " + data["gitlab"]}
+        target = getTarget(data["target"])
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    users = requests.get(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/members?per_page=100",
+        headers=header,
+    )
+
+    logging.info(f"Sent list of users for project {id}")
+    return users.json()
+
+
+# removes a user from the specific Arc
+@router.delete(
+    "/removeUser",
+    summary="Removes a user from the project",
+)
+async def removeUser(request: Request, id: int, userId: int, username: str):
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+        }
+        target = getTarget(data["target"])
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+    
+    removeRequest = requests.delete(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/members/{userId}",
+        headers=header,
+    )
+    if not removeRequest.ok:
+        logging.error(
+            f"Couldn't remove user {username} ! ERROR: {removeRequest.content}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't remove user from project! Error: {removeRequest.content}",
+        )
+    logging.info(f"Removed user {username} from project {id}")
+
+    return f"The user {username} was removed successfully!"
+
+
+# edits the role of a user from the specific Arc
+@router.put(
+    "/editUser",
+    summary="Edits a user of the project",
+)
+async def editUser(request: Request, id: int, userId: int, username: str, role: int):
+    try:
+        data = getData(request.cookies.get("data"))
+        header = {
+            "Authorization": "Bearer " + data["gitlab"],
+        }
+        target = getTarget(data["target"])
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    editRequest = requests.put(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/members/{userId}?access_level={role}",
+        headers=header,
+    )
+    if not editRequest.ok:
+        logging.error(f"Couldn't edit user {username} ! ERROR: {editRequest.content}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't edit user from project {id} to role {role}! Error: {editRequest.content}",
+        )
+    logging.info(f"Edited user {username} from project {id} to role {role}")
+
+    return f"The user {username} was edited successfully!"
