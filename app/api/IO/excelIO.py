@@ -39,9 +39,8 @@ def readIsaFile(path: str, type: str):
         try:
             isaFile = pd.read_excel(path, sheet_name=sheetName2)
         except:
+            # if none matches, just read the file with default values
             isaFile = pd.read_excel(path, 0)
-
-        # if none matches, just read the file with default values
 
     # parse the dataframe into json and return it
     parsed = loads(isaFile.to_json(orient="split"))
@@ -54,9 +53,7 @@ def writeIsaFile(
     path: str, type: str, id: int, oldContent, newContent, repoId: int, location: str
 ):
     # construct the path with the given values (e.g. .../freiburg-33/isa.investigation.xlsx)
-    pathName = (
-        os.environ.get("BACKEND_SAVE") + location + "-" + str(repoId) + "/" + path
-    )
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{location}-{repoId}/{path}"
     identifierLocation = 5
 
     # match the correct sheet name with the given type of isa
@@ -99,7 +96,10 @@ def writeIsaFile(
     for x in range(1, len(newContent)):
         # if there are new fields in newContent insert a new column "Unnamed: number" with empty fields
         if x > len(oldContent) - 1:
-            isaFile.insert(x, "Unnamed: " + str(x), "")
+            try:
+                isaFile.insert(x, "Unnamed: " + str(x), "")
+            except:
+                isaFile.insert(x, "Unnamed")
             # add the new field to old content to extent its length
             oldContent.append("")
 
@@ -194,7 +194,7 @@ def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
     for i, entry in enumerate(head):
         df.insert(i + 1, entry, content[i], allow_duplicates=True)
 
-    pathName = os.environ.get("BACKEND_SAVE") + target + "-" + str(id) + "/" + path
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{path}"
 
     # save data to file
     with pd.ExcelWriter(
@@ -291,6 +291,10 @@ def appendAssay(pathToAssay: str, pathToStudy: str, assayName: str):
     for x in range(len(assay)):
         study.iat[assayIndex + x, freeColumn] = assay.iat[x, 1]
 
+    # make space for the date if there are just two columns
+    if len(study.columns) < 3:
+        study["Unnamed: 2"] = ""
+
     # insert the current date next to the identifier to indicate the date since the metadata was last edited
     study.iat[0, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
@@ -375,6 +379,10 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
     for x in range(len(study)):
         for y in range(len(study.columns)):
             invest.iat[rowIndex + x, y] = study.iat[x, y]
+
+    # make space for the date if there are just two columns
+    if len(invest.columns) < 3:
+        invest["Unnamed: 2"] = ""
 
     # insert the current date next to the identifier to indicate the date since the metadata was last edited
     invest.iat[5, 2] = datetime.date.today().strftime("%d/%m/%Y")
