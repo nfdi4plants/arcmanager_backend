@@ -61,7 +61,7 @@ logging.basicConfig(
 
 
 # Match the given target repo with the address name in the env file (default is the gitlab dev server)
-def getTarget(target: str):
+def getTarget(target: str) -> str:
     match target:
         case "dev":
             return "GITLAB_ADDRESS"
@@ -78,7 +78,7 @@ def getTarget(target: str):
 
 
 # get the username using the id
-async def getUserName(target: str, userId: int, access_token: str):
+async def getUserName(target: str, userId: int, access_token: str) -> str:
     header = {"Authorization": "Bearer " + access_token}
     userInfo = requests.get(
         f"{os.environ.get(getTarget(target))}/api/v4/users/{userId}",
@@ -124,7 +124,7 @@ async def list_arcs(request: Request, owned=False):
         )
     if owned == "true":
         arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?per_page=1000&min_access_level=10",
+            f"{os.environ.get(target)}/api/v4/projects?per_page=100&min_access_level=10",
             headers=header,
         )
     else:
@@ -160,7 +160,7 @@ async def public_arcs(target: str):
     try:
         # if the requested gitlab is not available after 30s, return error 504
         request = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?per_page=1000", timeout=30
+            f"{os.environ.get(target)}/api/v4/projects?per_page=100", timeout=30
         )
     except:
         raise HTTPException(
@@ -203,10 +203,11 @@ async def arc_tree(id: int, request: Request):
     )
 
     if not arc.ok:
+        arcJson = arc.json()
         logging.error(f"Couldn't find ARC with ID {id}; ERROR: {arc.content[0:100]}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Couldn't find ARC with ID {id}; Error: {arc.content}",
+            detail=f"Couldn't find ARC with ID {id}; Error: {arcJson['error']}, {arcJson['error_description']}",
         )
 
     arc_json = Arc(Arc=arc.json())
@@ -238,10 +239,11 @@ async def arc_path(id: int, request: Request, path: str):
     )
     # raise error if the given path gives no result
     if not arcPath.ok:
+        pathJson = arcPath.json()
         logging.error(f"Path not found! Path: { path } ; ERROR: {arcPath.content}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Path not found! Error: {arcPath.content}! Try to login again!",
+            detail=f"Path not found! Error: {pathJson['error']}, {pathJson['error_description']}! Try to login again!",
         )
 
     arc_json = Arc(Arc=arcPath.json())
@@ -277,10 +279,10 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
     )
     # raise error if file not found
     if not fileHead.ok:
-        logging.error(f"File not found! Path: {path} ; ERROR: {fileHead.content}")
+        logging.error(f"File not found! Path: {path}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found! Error: {fileHead.content}",
+            detail=f"File not found! Error: {fileHead.status_code}, Try to log-in again!",
         )
 
     fileSize = fileHead.headers["X-Gitlab-Size"]
@@ -369,8 +371,6 @@ async def saveFile(request: Request):
     rowName = writeIsaFile(
         isaContent["isaPath"],
         getIsaType(isaContent["isaPath"]),
-        isaContent["rowId"],
-        isaContent["isaOld"],
         isaContent["isaInput"],
         isaContent["isaRepo"],
         target,
@@ -642,8 +642,6 @@ async def createArc(request: Request):
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
-        id=5,
-        oldContent=["Investigation Identifier"],
         newContent=["Investigation Identifier", investIdentifier],
         repoId=newArcJson["id"],
         location=data["target"],
@@ -818,8 +816,6 @@ async def createIsa(request: Request):
             writeIsaFile(
                 path=pathName,
                 type="study",
-                id=0,
-                oldContent=["Study Identifier"],
                 newContent=["Study Identifier", identifier],
                 repoId=id,
                 location=data["target"],
@@ -838,8 +834,6 @@ async def createIsa(request: Request):
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                id=0,
-                oldContent=["Measurement Type"],
                 newContent=["Measurement Type", identifier],
                 repoId=id,
                 location=data["target"],
@@ -848,8 +842,6 @@ async def createIsa(request: Request):
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                id=7,
-                oldContent=["File Name", "", ""],
                 newContent=["File Name", identifier + "/isa.assay.xlsx", ""],
                 repoId=id,
                 location=data["target"],
@@ -987,7 +979,7 @@ async def uploadFile(request: Request):
             try:
                 result = r.json()
             except:
-                return "Error: " + r.content
+                return "Error: There was an error uploading the file. Please re-authorize and try again!"
 
             # test if there is a change in the file
             testFail = False
@@ -1042,10 +1034,11 @@ async def uploadFile(request: Request):
                 response = requests.post(postUrl, headers=headers, json=jsonData)
 
             if not response.ok:
+                responseJson = response.json()
                 logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Couldn't upload file to repo! Error: {response.content}",
+                    detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                 )
 
             logging.debug("Uploading pointer file to repo...")
@@ -1143,10 +1136,11 @@ async def uploadFile(request: Request):
 
             logging.debug("Uploading file to repo...")
             if not request.ok:
+                requestJson = request.json()
                 logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Couldn't upload file to repo! Error: {request.content}",
+                    detail=f"Couldn't upload file to repo! Error: {requestJson['error']}, {requestJson['error_description']}",
                 )
 
             # logging
@@ -1877,7 +1871,15 @@ async def getUser(request: Request):
         f"{os.environ.get(target)}/api/v4/users?per_page=100",
         headers=header,
     )
-    for x in range(int(users.headers["x-total-pages"])):
+    try:
+        pages = users.headers["x-total-pages"]
+    except:
+        raise HTTPException(
+            status_code=users.status_code,
+            detail="No users found! Reason: " + users.reason,
+        )
+
+    for x in range(int(pages)):
         users = requests.get(
             f"{os.environ.get(target)}/api/v4/users?per_page=100&without_project_bots=true&page="
             + str(x + 1),
@@ -1953,10 +1955,17 @@ async def getArcUser(request: Request, id: int):
             detail="No authorized cookie found!",
         )
 
+    # request to get all users for the specific arc
     users = requests.get(
         f"{os.environ.get(target)}/api/v4/projects/{id}/members?per_page=100",
         headers=header,
     )
+    if not users.ok:
+        userJson = users.json()
+        raise HTTPException(
+            status_code=users.status_code,
+            detail=f"{userJson['error']}, {userJson['error_description']}",
+        )
 
     logging.info(f"Sent list of users for project {id}")
     return users.json()
@@ -1980,7 +1989,8 @@ async def removeUser(request: Request, id: int, userId: int, username: str):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
         )
-    
+
+    # request to delete the given user
     removeRequest = requests.delete(
         f"{os.environ.get(target)}/api/v4/projects/{id}/members/{userId}",
         headers=header,
@@ -2017,6 +2027,7 @@ async def editUser(request: Request, id: int, userId: int, username: str, role: 
             detail="No authorized cookie found!",
         )
 
+    # request to update user with given role
     editRequest = requests.put(
         f"{os.environ.get(target)}/api/v4/projects/{id}/members/{userId}?access_level={role}",
         headers=header,
