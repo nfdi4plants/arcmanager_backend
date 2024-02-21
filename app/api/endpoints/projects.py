@@ -177,9 +177,16 @@ async def list_arcs(request: Request, owned=False):
     "/public_arcs", summary="Lists all public ARCs", status_code=status.HTTP_200_OK
 )
 async def public_arcs(target: str):
+    startTime = time.time()
     try:
         target = getTarget(target)
     except:
+        writeLogJson(
+            "public_arcs",
+            404,
+            startTime,
+            f"Target git not found!",
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Target git not found!"
         )
@@ -190,12 +197,24 @@ async def public_arcs(target: str):
             f"{os.environ.get(target)}/api/v4/projects?per_page=100", timeout=30
         )
     except:
+        writeLogJson(
+            "public_arcs",
+            504,
+            startTime,
+            f"DataHUB currently not available!!",
+        )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="DataHUB currently not available!!",
         )
 
     if not request.ok:
+        writeLogJson(
+            "public_arcs",
+            500,
+            startTime,
+            f"Error retrieving the arcs! ERROR: {request.content}",
+        )
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving the arcs! ERROR: {request.content}",
@@ -204,6 +223,7 @@ async def public_arcs(target: str):
     project_list = Projects(projects=request.json())
 
     logging.debug("Sent public list of ARCs")
+    writeLogJson("public_arcs", 200, startTime)
 
     return project_list
 
@@ -1315,7 +1335,10 @@ async def uploadFile(request: Request):
 
             logging.debug("Uploading file to repo...")
             if not request.ok:
-                requestJson = request.json()
+                try:
+                    requestJson = request.json()
+                except:
+                    requestJson = request.content
                 logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -2526,7 +2549,7 @@ async def getMetrics(request: Request):
 
     # fill the metrics with respective data
     for entry in jsonLog:
-        print(time.strptime(entry["date"], "%d/%m/%Y - %H:%M:%S"))
+        # print(time.strptime(entry["date"], "%d/%m/%Y - %H:%M:%S"))
         # calculate the average response time for each entry point
         try:
             average = responseTimes[entry["endpoint"]][0]
