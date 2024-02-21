@@ -104,22 +104,26 @@ def getData(cookie: str):
     return data
 
 
+# writes the log entry into the json log file
 def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
-    with open("log.json", "r") as log:
-        jsonLog = json.load(log)
+    try:
+        with open("log.json", "r") as log:
+            jsonLog = json.load(log)
 
-    jsonLog.append(
-        {
-            "endpoint": endpoint,
-            "status": status,
-            "error": error,
-            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
-            "response_time": format(time.time() - startTime),
-        }
-    )
+        jsonLog.append(
+            {
+                "endpoint": endpoint,
+                "status": status,
+                "error": error,
+                "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+                "response_time": format(time.time() - startTime),
+            }
+        )
 
-    with open("log.json", "w") as logWrite:
-        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+        with open("log.json", "w") as logWrite:
+            json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+    except:
+        logging.warning("Error while logging to log json!")
 
 
 # get a list of all arcs accessible to the user
