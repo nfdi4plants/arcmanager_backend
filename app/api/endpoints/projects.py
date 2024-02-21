@@ -26,6 +26,7 @@ from starlette.status import (
 )
 
 import logging
+import time
 
 # paths in get requests need to be parsed to uri encoded strings
 from urllib.parse import quote
@@ -103,6 +104,24 @@ def getData(cookie: str):
     return data
 
 
+def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
+    with open("log.json", "r") as log:
+        jsonLog = json.load(log)
+
+    jsonLog.append(
+        {
+            "endpoint": endpoint,
+            "status": status,
+            "error": error,
+            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+            "response_time": format(time.time() - startTime),
+        }
+    )
+
+    with open("log.json", "w") as logWrite:
+        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+
+
 # get a list of all arcs accessible to the user
 @router.get(
     "/arc_list",
@@ -110,6 +129,7 @@ def getData(cookie: str):
     status_code=status.HTTP_200_OK,
 )
 async def list_arcs(request: Request, owned=False):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
@@ -117,6 +137,12 @@ async def list_arcs(request: Request, owned=False):
     except:
         logging.warning(
             f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "arc_file",
+            401,
+            startTime,
+            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -142,6 +168,7 @@ async def list_arcs(request: Request, owned=False):
 
     project_list = Projects(projects=arcs.json())
     logging.info("Sent list of Arcs")
+    writeLogJson("arc_list", 200, startTime)
     return project_list
 
 
@@ -184,13 +211,20 @@ async def public_arcs(target: str):
 # get the frontpage tree structure of the arc
 @router.get("/arc_tree", summary="Overview of the ARC", status_code=status.HTTP_200_OK)
 async def arc_tree(id: int, request: Request):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
         target = getTarget(data["target"])
     except:
         logging.warning(
-            "Client has no rights to view this ARC! Cookies: " + f"{request.cookies}"
+            f"Client has no rights to view this ARC! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "arc_tree",
+            401,
+            startTime,
+            f"Client has no rights to view this ARC! Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -205,6 +239,12 @@ async def arc_tree(id: int, request: Request):
     if not arc.ok:
         arcJson = arc.json()
         logging.error(f"Couldn't find ARC with ID {id}; ERROR: {arc.content[0:100]}")
+        writeLogJson(
+            "arc_tree",
+            404,
+            startTime,
+            f"Couldn't find ARC with ID {id}; ERROR: {arc.content[0:100]}",
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Couldn't find ARC with ID {id}; Error: {arcJson['error']}, {arcJson['error_description']}",
@@ -212,7 +252,7 @@ async def arc_tree(id: int, request: Request):
 
     arc_json = Arc(Arc=arc.json())
     logging.info("Sent info of ARC " + str(id))
-
+    writeLogJson("arc_tree", 200, startTime)
     return arc_json
 
 
@@ -221,6 +261,7 @@ async def arc_tree(id: int, request: Request):
     "/arc_path", summary="Subdirectory of the ARC", status_code=status.HTTP_200_OK
 )
 async def arc_path(id: int, request: Request, path: str):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
@@ -228,6 +269,12 @@ async def arc_path(id: int, request: Request, path: str):
     except:
         logging.warning(
             f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "arc_path",
+            401,
+            startTime,
+            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -241,6 +288,12 @@ async def arc_path(id: int, request: Request, path: str):
     if not arcPath.ok:
         pathJson = arcPath.json()
         logging.error(f"Path not found! Path: { path } ; ERROR: {arcPath.content}")
+        writeLogJson(
+            "arc_path",
+            404,
+            startTime,
+            f"Path not found! Path: { path } ; ERROR: {arcPath.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Path not found! Error: {pathJson['error']}, {pathJson['error_description']}! Try to login again!",
@@ -248,7 +301,7 @@ async def arc_path(id: int, request: Request, path: str):
 
     arc_json = Arc(Arc=arcPath.json())
     logging.info(f"Sent info of ARC {id} with path {path}")
-
+    writeLogJson("arc_path", 200, startTime)
     return arc_json
 
 
@@ -259,6 +312,7 @@ async def arc_path(id: int, request: Request, path: str):
     status_code=status.HTTP_200_OK,
 )
 async def arc_file(id: int, path: str, request: Request, branch="main"):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
@@ -266,6 +320,12 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
     except:
         logging.warning(
             f"Client is not authorized to get the file! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "arc_file",
+            401,
+            startTime,
+            f"Client is not authorized to get the file! Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -280,6 +340,12 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
     # raise error if file not found
     if not fileHead.ok:
         logging.error(f"File not found! Path: {path}")
+        writeLogJson(
+            "arc_file",
+            404,
+            startTime,
+            f"File not found! Path: {path}",
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File not found! Error: {fileHead.status_code}, Try to log-in again!",
@@ -309,13 +375,19 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         fileJson = readIsaFile(pathName, getIsaType(path))
 
         logging.info(f"Sent ISA file {path} from ID: {id}")
-
+        writeLogJson("arc_file", 200, startTime)
         return fileJson["data"]
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
         # if file is too big, skip requesting it
         if int(fileSize) > 10000000:
             logging.warning("File too large! Size: " + fileSize)
+            writeLogJson(
+                "arc_file",
+                413,
+                startTime,
+                "File too large! Size: " + fileSize,
+            )
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="File too large! (over 10 MB)",
@@ -344,14 +416,17 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
 
             fileJson = arcFile.json()
             fileJson["content"] = encoded
+            writeLogJson("arc_file", 200, startTime)
             return fileJson
         else:
+            writeLogJson("arc_file", 200, startTime)
             return arcFile.json()
 
 
 # reads out the content of the put request body; writes the content to the corresponding isa file on the storage
 @router.put("/saveFile", summary="Write content to isa file")
 async def saveFile(request: Request):
+    startTime = time.time()
     requestBody = await request.body()
     try:
         data = getData(request.cookies.get("data"))
@@ -361,6 +436,12 @@ async def saveFile(request: Request):
     except:
         logging.error(
             f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
+        )
+        writeLogJson(
+            "saveFile",
+            401,
+            startTime,
+            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -391,16 +472,24 @@ async def saveFile(request: Request):
             rowName,
         )
     except:
-        logging.warning(
-            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
+        logging.warning(f"Isa file could not be edited! Cookies: {request.cookies}")
+        writeLogJson(
+            "saveFile",
+            400,
+            startTime,
+            f"Isa file could not be edited! Cookies: {request.cookies}",
         )
         raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="No authorized session cookie found",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File could not be edited!",
         )
 
     logging.info(f"Sent file {isaContent['isaPath']} to ARC {isaContent['isaRepo']}")
-
+    writeLogJson(
+        "saveFile",
+        200,
+        startTime,
+    )
     return str(commitResponse)
 
 
@@ -409,6 +498,7 @@ async def saveFile(request: Request):
 async def commitFile(
     request: Request, id: int, repoPath, filePath="", branch="main", message=""
 ):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -421,6 +511,12 @@ async def commitFile(
     except:
         logging.error(
             f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
+        )
+        writeLogJson(
+            "commitFile",
+            400,
+            startTime,
+            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -464,11 +560,18 @@ async def commitFile(
 
     if not request.ok:
         logging.error(f"Couldn't commit to ARC! ERROR: {request.content}")
+        writeLogJson(
+            "commitFile",
+            400,
+            startTime,
+            f"Couldn't commit to ARC! ERROR: {request.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't commit file to repo! Error: {request.content}",
         )
     logging.info(f"Updated file on path: {repoPath}")
+    writeLogJson("commitFile", 200, startTime)
     return request.content
 
 
@@ -478,6 +581,7 @@ async def commitFile(
     "/createArc", summary="Creates a new Arc", status_code=status.HTTP_201_CREATED
 )
 async def createArc(request: Request):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -492,6 +596,12 @@ async def createArc(request: Request):
     except:
         logging.warning(
             f"Client not logged in for ARC creation! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "createArc",
+            401,
+            startTime,
+            f"Client not logged in for ARC creation! Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -519,6 +629,12 @@ async def createArc(request: Request):
     )
     if not projectPost.ok:
         logging.error(f"Couldn't create new ARC! ERROR: {projectPost.content}")
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Couldn't create new ARC! ERROR: {projectPost.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Couldn't create new project! Error: {projectPost.content}",
@@ -626,6 +742,12 @@ async def createArc(request: Request):
         logging.error(
             f"Couldn't commit ARC structure to the Hub! ERROR: {commitRequest.content}"
         )
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Couldn't commit ARC structure to the Hub! ERROR: {commitRequest.content}",
+        )
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Couldn't commit the arc to the repo! Error: {commitRequest.content}",
@@ -654,7 +776,7 @@ async def createArc(request: Request):
         filePath=f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{newArcJson['id']}/isa.investigation.xlsx",
         branch=newArcJson["default_branch"],
     )
-
+    writeLogJson("createArc", 201, startTime)
     return [projectPost.content, commitRequest.content]
 
 
@@ -665,6 +787,7 @@ async def createArc(request: Request):
     status_code=status.HTTP_201_CREATED,
 )
 async def createIsa(request: Request):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -680,6 +803,12 @@ async def createIsa(request: Request):
         logging.warning(
             f"Client not authorized to create new ISA! Cookies: {request.cookies}"
         )
+        writeLogJson(
+            "createISA",
+            401,
+            startTime,
+            f"Client not authorized to create new ISA! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
         )
@@ -692,6 +821,12 @@ async def createIsa(request: Request):
         branch = isaContent["branch"]
     except:
         logging.error(f"Missing Properties for isa! Data: {isaContent}")
+        writeLogJson(
+            "createISA",
+            400,
+            startTime,
+            f"Missing Properties for isa! Data: {isaContent}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing Properties for the isa!",
@@ -792,6 +927,12 @@ async def createIsa(request: Request):
     )
     if not commitRequest.ok:
         logging.error(f"Couldn't commit ISA to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "createISA",
+            500,
+            startTime,
+            f"Couldn't commit ISA to ARC! ERROR: {commitRequest.content}",
+        )
         raise HTTPException(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Couldn't commit ISA structure to repo! Error: {commitRequest.content}",
@@ -853,7 +994,11 @@ async def createIsa(request: Request):
         repoPath=pathName,
         filePath=f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{pathName}",
     )
-
+    writeLogJson(
+        "createISA",
+        201,
+        startTime,
+    )
     return commitRequest.content
 
 
@@ -861,6 +1006,7 @@ async def createIsa(request: Request):
     "/uploadFile", summary="Uploads the given file to the repo (with or without lfs)"
 )
 async def uploadFile(request: Request):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         # get the data from the body
@@ -874,6 +1020,12 @@ async def uploadFile(request: Request):
     except:
         logging.error(
             f"uploadFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
+        )
+        writeLogJson(
+            "uploadFile",
+            400,
+            startTime,
+            f"uploadFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -979,6 +1131,12 @@ async def uploadFile(request: Request):
             try:
                 result = r.json()
             except:
+                writeLogJson(
+                    "uploadFile",
+                    500,
+                    startTime,
+                    f"Error while uploading the file to lfs storage!",
+                )
                 return "Error: There was an error uploading the file. Please re-authorize and try again!"
 
             # test if there is a change in the file
@@ -1036,6 +1194,12 @@ async def uploadFile(request: Request):
             if not response.ok:
                 responseJson = response.json()
                 logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+                writeLogJson(
+                    "uploadFile",
+                    400,
+                    startTime,
+                    f"Couldn't upload to ARC! ERROR: {response.content}",
+                )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
@@ -1069,6 +1233,11 @@ async def uploadFile(request: Request):
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
                 logging.debug("Uploading .gitattributes to repo...")
+                writeLogJson(
+                    "uploadFile",
+                    200,
+                    startTime,
+                )
                 return response.json()
 
             # if filename is not inside the .gitattributes, add it
@@ -1085,9 +1254,19 @@ async def uploadFile(request: Request):
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
                 logging.debug("Updating .gitattributes...")
+                writeLogJson(
+                    "uploadFile",
+                    200,
+                    startTime,
+                )
                 return response.json()
             # if filename already exists, do nothing and just return "File updated"
             else:
+                writeLogJson(
+                    "uploadFile",
+                    200,
+                    startTime,
+                )
                 return "File updated"
 
         # if its a regular upload without git-lfs
@@ -1108,7 +1287,7 @@ async def uploadFile(request: Request):
                     "encoding": "base64",
                 }
 
-                # update the file on the gitlab
+                # create the file on the gitlab
                 request = requests.post(
                     f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}",
                     data=json.dumps(payload),
@@ -1126,7 +1305,7 @@ async def uploadFile(request: Request):
                     "encoding": "base64",
                 }
 
-                # send the file to the gitlab
+                # update the file to the gitlab
                 request = requests.put(
                     f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}",
                     data=json.dumps(payload),
@@ -1140,7 +1319,7 @@ async def uploadFile(request: Request):
                 logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Couldn't upload file to repo! Error: {requestJson['error']}, {requestJson['error_description']}",
+                    detail=f"Couldn't upload file to repo! Error: {requestJson}",
                 )
 
             # logging
@@ -1149,9 +1328,18 @@ async def uploadFile(request: Request):
             )
 
             response = Response(request.content, statusCode)
-
+            writeLogJson(
+                "uploadFile",
+                statusCode,
+                startTime,
+            )
             return response
     else:
+        writeLogJson(
+            "uploadFile",
+            200,
+            startTime,
+        )
         return f"Received chunk {chunkNumber+1} of {totalChunks} for file {requestForm.get('name')}"
 
 
@@ -1161,6 +1349,7 @@ async def uploadFile(request: Request):
     status_code=status.HTTP_200_OK,
 )
 async def getTemplates():
+    startTime = time.time()
     # send get request to swate api requesting all templates
     request = requests.get(
         "https://swate.nfdi4plants.org/api/IProtocolAPIv1/getAllProtocolsWithoutXml"
@@ -1171,6 +1360,12 @@ async def getTemplates():
         logging.error(
             f"There was an error retrieving the swate templates! ERROR: {request.json()}"
         )
+        writeLogJson(
+            "getTemplates",
+            500,
+            startTime,
+            f"There was an error retrieving the swate templates! ERROR: {request.json()}",
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Couldn't receive swate templates",
@@ -1180,7 +1375,11 @@ async def getTemplates():
     template_list = Templates(templates=request.json())
 
     logging.info("Sent list of swate templates to client!")
-
+    writeLogJson(
+        "getTemplates",
+        200,
+        startTime,
+    )
     # return the templates
     return template_list
 
@@ -1191,6 +1390,7 @@ async def getTemplates():
     status_code=status.HTTP_200_OK,
 )
 async def getTemplate(id: str):
+    startTime = time.time()
     # wrap the desired id in an json array
     payload = json.dumps([id])
 
@@ -1206,6 +1406,12 @@ async def getTemplate(id: str):
         logging.error(
             f"There was an error retrieving the swate template with id {id} ! ERROR: {request.json()}"
         )
+        writeLogJson(
+            "getTemplate",
+            400,
+            startTime,
+            f"There was an error retrieving the swate template with id {id} ! ERROR: {request.json()}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Couldn't find template with id: " + id,
@@ -1215,7 +1421,11 @@ async def getTemplate(id: str):
     templateBlocks = request.json()["TemplateBuildingBlocks"]
 
     logging.info(f"Sending template with id {id} to client!")
-
+    writeLogJson(
+        "getTemplate",
+        200,
+        startTime,
+    )
     return templateBlocks
 
 
@@ -1231,6 +1441,7 @@ async def getTerms(
     request: Request,
     advanced=False,
 ):
+    startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
         # if there is an extended search requested, make an advanced search call
@@ -1274,6 +1485,12 @@ async def getTerms(
     # if there is a timeout, respond with an error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
+        writeLogJson(
+            "getTerms",
+            504,
+            startTime,
+            "Request took to long! Sending timeout error to client...",
+        )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="No term could be found in time!",
@@ -1284,12 +1501,19 @@ async def getTerms(
         logging.error(
             f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}"
         )
+        writeLogJson(
+            "getTerms",
+            400,
+            startTime,
+            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your request couldn't be processed!",
         )
 
     logging.info(f"Sent a list of terms for '{input}' to client!")
+    writeLogJson("getTerms", 200, startTime)
     # return the list of terms found for the given input
     return request.json()
 
@@ -1302,6 +1526,7 @@ async def getTerms(
 async def getTermSuggestionsByParentTerm(
     request: Request, parentName: str, parentTermAccession: str
 ):
+    startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
         # default is an request call containing the parentTerm values
@@ -1323,6 +1548,12 @@ async def getTermSuggestionsByParentTerm(
     # if there is a timeout, respond with error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
+        writeLogJson(
+            "getTermSbPT",
+            504,
+            startTime,
+            "Request took to long! Sending timeout error to client...",
+        )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="No terms could be found in time!",
@@ -1333,11 +1564,22 @@ async def getTermSuggestionsByParentTerm(
         logging.error(
             f"There was an error retrieving the terms for '{parentName}'! ERROR: {request.json()}"
         )
+        writeLogJson(
+            "getTermSbPT",
+            400,
+            startTime,
+            f"There was an error retrieving the terms for '{parentName}'! ERROR: {request.json()}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your request couldn't be processed!",
         )
     logging.info(f"Sent a list of terms for '{parentName}' to client!")
+    writeLogJson(
+        "getTermSbPT",
+        200,
+        startTime,
+    )
     # return the list of terms found for the given input
     return request.json()
 
@@ -1348,6 +1590,7 @@ async def getTermSuggestionsByParentTerm(
     status_code=status.HTTP_200_OK,
 )
 async def getTermSuggestions(request: Request, input: str, n=20):
+    startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
         # default is an request call containing the parentTerm values
@@ -1369,6 +1612,12 @@ async def getTermSuggestions(request: Request, input: str, n=20):
     # if there is a timeout, respond with an error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
+        writeLogJson(
+            "getTermSugg.",
+            504,
+            startTime,
+            "Request took to long! Sending timeout error to client...",
+        )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="No terms could be found in time!",
@@ -1379,11 +1628,22 @@ async def getTermSuggestions(request: Request, input: str, n=20):
         logging.error(
             f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}"
         )
+        writeLogJson(
+            "getTermSugg.",
+            400,
+            startTime,
+            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your request couldn't be processed!",
         )
     logging.info(f"Sent a list of terms for '{input}' to client!")
+    writeLogJson(
+        "getTermSugg.",
+        200,
+        startTime,
+    )
     # return the list of terms found for the given input
     return request.json()
 
@@ -1394,6 +1654,7 @@ async def getTermSuggestions(request: Request, input: str, n=20):
     status_code=status.HTTP_200_OK,
 )
 async def saveSheet(request: Request):
+    startTime = time.time()
     # get the body of the post request
     requestBody = await request.body()
 
@@ -1412,6 +1673,12 @@ async def saveSheet(request: Request):
     # if there are either the name or the accession missing, return error 400
     except:
         logging.warning("Client request couldn't be processed, the content is missing!")
+        writeLogJson(
+            "saveSheet",
+            400,
+            startTime,
+            "Client request couldn't be processed, the content is missing!",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Couldn't retrieve content of table",
@@ -1431,7 +1698,7 @@ async def saveSheet(request: Request):
 
     # send the edited file back to gitlab
     response = await commitFile(request, projectId, path, pathName, message=name)
-
+    writeLogJson("saveSheet", 200, startTime)
     return str(response)
 
 
@@ -1441,6 +1708,7 @@ async def saveSheet(request: Request):
     status_code=status.HTTP_200_OK,
 )
 async def getSheets(request: Request, path: str, id, branch="main"):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         target = getTarget(data["target"])
@@ -1450,6 +1718,12 @@ async def getSheets(request: Request, path: str, id, branch="main"):
         }
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getSheets",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1463,7 +1737,7 @@ async def getSheets(request: Request, path: str, id, branch="main"):
 
     # read out the list of swate sheets
     sheets = getSwateSheets(pathName, getIsaType(path))
-
+    writeLogJson("getSheets", 200, startTime)
     return sheets
 
 
@@ -1473,12 +1747,19 @@ async def getSheets(request: Request, path: str, id, branch="main"):
     status_code=status.HTTP_200_OK,
 )
 async def getChanges(request: Request, id: int):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
         target = getTarget(data["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getChanges",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1491,6 +1772,12 @@ async def getChanges(request: Request, id: int):
 
     if not commits.ok:
         logging.error(f"Commits not found! ID: {id} ; ERROR: {commits.content}")
+        writeLogJson(
+            "getChanges",
+            404,
+            startTime,
+            f"Commits not found! ID: {id} ; ERROR: {commits.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Commits not found! Error: {commits.content}! Try to login again!",
@@ -1501,6 +1788,7 @@ async def getChanges(request: Request, id: int):
     for entry in commitJson:
         response.append(f"{entry['authored_date'].split('T')[0]}: {entry['title']}")
 
+    writeLogJson("getChanges", 200, startTime)
     return response
 
 
@@ -1508,12 +1796,19 @@ async def getChanges(request: Request, id: int):
     "/getStudies", summary="Get a list of current studies", include_in_schema=False
 )
 async def getStudies(request: Request, id: int):
+    startTime = time.time()
     studies = []
     try:
         # request arc studies
         studiesJson = await arc_path(id=id, request=request, path="studies")
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getStudies",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1522,7 +1817,7 @@ async def getStudies(request: Request, id: int):
     for x in studiesJson.Arc:
         if x.type == "tree":
             studies.append(x.name)
-
+    writeLogJson("getStudies", 200, startTime)
     return studies
 
 
@@ -1530,12 +1825,19 @@ async def getStudies(request: Request, id: int):
     "/getAssays", summary="Get a list of current assays", include_in_schema=False
 )
 async def getAssays(request: Request, id: int):
+    startTime = time.time()
     assays = []
     try:
         # request arc studies
         assaysJson = await arc_path(id=id, request=request, path="assays")
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getAssays",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1544,12 +1846,13 @@ async def getAssays(request: Request, id: int):
     for x in assaysJson.Arc:
         if x.type == "tree":
             assays.append(x.name)
-
+    writeLogJson("getAssays", 200, startTime)
     return assays
 
 
 @router.patch("/syncAssay", summary="Syncs an assay into a study")
 async def syncAssay(request: Request):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -1559,6 +1862,12 @@ async def syncAssay(request: Request):
 
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "syncAssays",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1574,6 +1883,12 @@ async def syncAssay(request: Request):
 
     except:
         logging.warning(f"Missing Data for Assay sync! Data: {fileContent}")
+        writeLogJson(
+            "syncAssays",
+            400,
+            startTime,
+            f"Missing Data for Assay sync! Data: {fileContent}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
@@ -1602,18 +1917,26 @@ async def syncAssay(request: Request):
         logging.warning(
             f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
         )
+        writeLogJson(
+            "syncAssays",
+            401,
+            startTime,
+            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="No authorized session cookie found",
         )
 
     logging.info(f"Sent file {pathToStudy} to ARC {id}")
+    writeLogJson("syncAssays", 200, startTime)
     # frontend gets the response from the commit post back
     return str(commitResponse)
 
 
 @router.patch("/syncStudy", summary="Syncs a study into the investigation file")
 async def syncStudy(request: Request):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -1623,6 +1946,12 @@ async def syncStudy(request: Request):
 
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "syncStudy",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1637,6 +1966,12 @@ async def syncStudy(request: Request):
 
     except:
         logging.warning(f"Missing Data for Assay sync! Data: {fileContent}")
+        writeLogJson(
+            "syncStudy",
+            400,
+            startTime,
+            f"Missing Data for Assay sync! Data: {fileContent}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
@@ -1664,12 +1999,19 @@ async def syncStudy(request: Request):
         logging.warning(
             f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
         )
+        writeLogJson(
+            "syncStudy",
+            401,
+            startTime,
+            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="No authorized session cookie found",
         )
 
     logging.info(f"Sent file isa.investigation.xlsx to ARC {id}")
+    writeLogJson("syncStudy", 200, startTime)
     # frontend gets a simple 'success' as response
     return str(commitResponse)
 
@@ -1681,6 +2023,7 @@ async def syncStudy(request: Request):
     status_code=status.HTTP_200_OK,
 )
 async def deleteFile(id: int, path: str, request: Request, branch="main"):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {
@@ -1691,6 +2034,12 @@ async def deleteFile(id: int, path: str, request: Request, branch="main"):
     except:
         logging.warning(
             f"Client is not authorized to delete the file! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "deleteFile",
+            401,
+            startTime,
+            f"Client is not authorized to delete the file! Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -1707,11 +2056,18 @@ async def deleteFile(id: int, path: str, request: Request, branch="main"):
 
     if not deletion.ok:
         logging.error(f"Couldn't delete file {path} ! ERROR: {deletion.content}")
+        writeLogJson(
+            "deleteFile",
+            400,
+            startTime,
+            f"Couldn't delete file {path} ! ERROR: {deletion.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't delete file on repo! Error: {deletion.content}",
         )
     logging.info(f"Deleted file on path: {path}")
+    writeLogJson("deleteFile", 200, startTime)
     return "Successfully deleted the file!"
 
 
@@ -1722,6 +2078,7 @@ async def deleteFile(id: int, path: str, request: Request, branch="main"):
     status_code=status.HTTP_200_OK,
 )
 async def deleteFolder(id: int, path: str, request: Request, branch="main"):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {
@@ -1731,11 +2088,17 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
         target = getTarget(data["target"])
     except:
         logging.warning(
-            f"Client is not authorized to delete the file! Cookies: {request.cookies}"
+            f"Client is not authorized to delete the folder! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "deleteFolder",
+            401,
+            startTime,
+            f"Client is not authorized to delete the folder! Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to delete this file",
+            detail="You are not authorized to delete this folder",
         )
 
     # get the content of the folder
@@ -1777,11 +2140,18 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
 
     if not deleteRequest.ok:
         logging.error(f"Couldn't delete folder {path} ! ERROR: {deleteRequest.content}")
+        writeLogJson(
+            "deleteFolder",
+            400,
+            startTime,
+            f"Couldn't delete folder {path} ! ERROR: {deleteRequest.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't delete folder on repo! Error: {deleteRequest.content}",
         )
     logging.info(f"Deleted folder on path: {path}")
+    writeLogJson("deleteFolder", 200, startTime)
     return "Successfully deleted the folder!"
 
 
@@ -1792,6 +2162,7 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
     status_code=status.HTTP_201_CREATED,
 )
 async def createFolder(request: Request):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -1806,6 +2177,12 @@ async def createFolder(request: Request):
     except:
         logging.warning(
             f"Client not authorized to create new folder! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "createFolder",
+            401,
+            startTime,
+            f"Client not authorized to create new folder! Cookies: {request.cookies}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -1831,6 +2208,12 @@ async def createFolder(request: Request):
         path += "/.gitkeep"
     except:
         logging.error(f"Missing Properties for folder! Data: {folder}")
+        writeLogJson(
+            "createFolder",
+            400,
+            startTime,
+            f"Missing Properties for folder! Data: {folder}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing Properties for the folder!",
@@ -1844,23 +2227,37 @@ async def createFolder(request: Request):
 
     if not request.ok:
         logging.error(f"Couldn't create folder {path} ! ERROR: {request.content}")
+        writeLogJson(
+            "createFolder",
+            400,
+            startTime,
+            f"Couldn't create folder {path} ! ERROR: {request.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't create folder on repo! Error: {request.content}",
         )
     logging.info(f"Created folder on path: {path}")
+    writeLogJson("createFolder", 201, startTime)
     return request.content
 
 
 # get a list of all users for the datahub
 @router.get("/getUser", summary="Get a list of all users")
 async def getUser(request: Request):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
         target = getTarget(data["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getUser",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1874,6 +2271,12 @@ async def getUser(request: Request):
     try:
         pages = users.headers["x-total-pages"]
     except:
+        writeLogJson(
+            "getUser",
+            404,
+            startTime,
+            "No users found! Reason: " + users.reason,
+        )
         raise HTTPException(
             status_code=users.status_code,
             detail="No users found! Reason: " + users.reason,
@@ -1888,6 +2291,7 @@ async def getUser(request: Request):
         userList += users.json()
 
     logging.info(f"Sent list of all users of the datahub!")
+    writeLogJson("getUser", 200, startTime)
     return userList
 
 
@@ -1897,6 +2301,7 @@ async def getUser(request: Request):
     status_code=status.HTTP_201_CREATED,
 )
 async def addUser(request: Request):
+    startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
@@ -1909,6 +2314,12 @@ async def addUser(request: Request):
         target = getTarget(data["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "addUser",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1932,11 +2343,18 @@ async def addUser(request: Request):
     )
     if not addRequest.ok:
         logging.error(f"Couldn't add user {name} ! ERROR: {addRequest.content}")
+        writeLogJson(
+            "addUser",
+            400,
+            startTime,
+            f"Couldn't add user {name} ! ERROR: {addRequest.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't add user to project! Error: {addRequest.content}",
         )
     logging.info(f"Added user {name} to project {arcId} with role {userRole}")
+    writeLogJson("addUser", 201, startTime)
 
     return f"The user {name} was added successfully!"
 
@@ -1944,12 +2362,19 @@ async def addUser(request: Request):
 # get a list of all users for the specific Arc
 @router.get("/getArcUser", summary="Get a list of all members of the arc")
 async def getArcUser(request: Request, id: int):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {"Authorization": "Bearer " + data["gitlab"]}
         target = getTarget(data["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getArcUser",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1962,12 +2387,19 @@ async def getArcUser(request: Request, id: int):
     )
     if not users.ok:
         userJson = users.json()
+        writeLogJson(
+            "getArcUser",
+            users.status_code,
+            startTime,
+            f"{userJson['error']}, {userJson['error_description']}",
+        )
         raise HTTPException(
             status_code=users.status_code,
             detail=f"{userJson['error']}, {userJson['error_description']}",
         )
 
     logging.info(f"Sent list of users for project {id}")
+    writeLogJson("getArcUser", 200, startTime)
     return users.json()
 
 
@@ -1977,6 +2409,7 @@ async def getArcUser(request: Request, id: int):
     summary="Removes a user from the project",
 )
 async def removeUser(request: Request, id: int, userId: int, username: str):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {
@@ -1985,6 +2418,12 @@ async def removeUser(request: Request, id: int, userId: int, username: str):
         target = getTarget(data["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "removeUser",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -1999,11 +2438,18 @@ async def removeUser(request: Request, id: int, userId: int, username: str):
         logging.error(
             f"Couldn't remove user {username} ! ERROR: {removeRequest.content}"
         )
+        writeLogJson(
+            "removeUser",
+            400,
+            startTime,
+            f"Couldn't remove user {username} ! ERROR: {removeRequest.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't remove user from project! Error: {removeRequest.content}",
         )
     logging.info(f"Removed user {username} from project {id}")
+    writeLogJson("removeUser", 200, startTime)
 
     return f"The user {username} was removed successfully!"
 
@@ -2014,6 +2460,7 @@ async def removeUser(request: Request, id: int, userId: int, username: str):
     summary="Edits a user of the project",
 )
 async def editUser(request: Request, id: int, userId: int, username: str, role: int):
+    startTime = time.time()
     try:
         data = getData(request.cookies.get("data"))
         header = {
@@ -2022,6 +2469,12 @@ async def editUser(request: Request, id: int, userId: int, username: str, role: 
         target = getTarget(data["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "editUser",
+            401,
+            startTime,
+            f"No authorized Cookie found! Cookies: {request.cookies}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
@@ -2034,10 +2487,75 @@ async def editUser(request: Request, id: int, userId: int, username: str, role: 
     )
     if not editRequest.ok:
         logging.error(f"Couldn't edit user {username} ! ERROR: {editRequest.content}")
+        writeLogJson(
+            "editUser",
+            400,
+            startTime,
+            f"Couldn't edit user {username} ! ERROR: {editRequest.content}",
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't edit user from project {id} to role {role}! Error: {editRequest.content}",
         )
     logging.info(f"Edited user {username} from project {id} to role {role}")
+    writeLogJson("editUser", 200, startTime)
 
     return f"The user {username} was edited successfully!"
+
+
+# sends back a list of metrics for display
+@router.get(
+    "/getMetrics",
+    summary="Returns a json containing the metrics of the api",
+    include_in_schema=False,
+)
+async def getMetrics(request: Request):
+    # load the log json containing the data
+    try:
+        with open("log.json", "r") as log:
+            jsonLog = json.load(log)
+        if len(jsonLog) < 1:
+            raise Exception()
+    except:
+        raise HTTPException(status_code=500, detail="No Metrics found!")
+
+    # setup the different metrics
+    responseTimes = {}
+    statusCodes = {}
+    errors = []
+
+    # fill the metrics with respective data
+    for entry in jsonLog:
+        print(time.strptime(entry["date"], "%d/%m/%Y - %H:%M:%S"))
+        # calculate the average response time for each entry point
+        try:
+            average = responseTimes[entry["endpoint"]][0]
+            count = responseTimes[entry["endpoint"]][1]
+            responseTime = entry["response_time"]
+
+            newAverage = (float(average) * int(count) + float(responseTime)) / int(
+                count + 1
+            )
+
+            responseTimes[entry["endpoint"]] = [str(newAverage), count + 1]
+
+        # if there is no entry yet for the endpoint, create one
+        except:
+            responseTimes[entry["endpoint"]] = [entry["response_time"], 1]
+
+        # calculate the amount of each status code
+        try:
+            count = statusCodes[entry["status"]]
+            statusCodes[entry["status"]] = int(count) + 1
+        # if the status code is not listed yet, add it
+        except:
+            statusCodes[entry["status"]] = 1
+        # if there is an error, add it to the array
+        if entry["error"] != None:
+            errors.append(f"{entry['endpoint']}, {entry['status']}: {entry['error']}")
+
+    return {
+        "responseTimes": responseTimes,
+        "statusCodes": statusCodes,
+        "errors": errors,
+    }

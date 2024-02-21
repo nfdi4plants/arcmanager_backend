@@ -22,10 +22,14 @@ app = FastAPI(
     summary="ARCmanager API enables you to read out and write to your ARC in any datahub",
     docs_url="/arcmanager/api/v1/docs",
     openapi_url="/arcmanager/api/v1/openapi.json",
-    version="0.5.2",
+    version="0.5.3",
     description=description,
 )
 
+# clear the current log
+with open("log.json", "w") as log:
+    log.write("[]")
+log.close()
 
 load_dotenv()
 
