@@ -13,6 +13,8 @@ router = APIRouter()
 import jwt
 import os
 
+import time
+
 ## Read Oauth client info from .env for production
 config = Config(".env")
 oauth = OAuth(config)
@@ -41,6 +43,24 @@ oauth.register(
     server_metadata_url="https://gitlab.plantmicrobe.de/.well-known/openid-configuration",
     client_kwargs={"scope": "openid api profile"},
 )
+
+
+def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
+    with open("log.json", "r") as log:
+        jsonLog = json.load(log)
+
+    jsonLog.append(
+        {
+            "endpoint": endpoint,
+            "status": status,
+            "error": error,
+            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+            "response_time": time.time() - startTime,
+        }
+    )
+
+    with open("log.json", "w") as logWrite:
+        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
 
 
 # redirect user to requested keycloak to enter login credentials
@@ -84,6 +104,7 @@ async def login(request: Request, datahub: str):
     summary="Redirection after successful user login and creation of server-side user session",
 )
 async def callback(request: Request, datahub: str):
+    startTime = time.time()
     # response = RedirectResponse("http://localhost:5173")
     response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
 
@@ -133,6 +154,7 @@ async def callback(request: Request, datahub: str):
     response.delete_cookie("error")
 
     request.session.clear()
+    writeLogJson("callback", 307, startTime)
     return response
 
 

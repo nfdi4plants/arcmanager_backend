@@ -173,3 +173,5 @@ cython_debug/
 # Production deployment documentation
 
 deployment.md
+*.txt
+log*
