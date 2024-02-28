@@ -116,7 +116,7 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
                 "status": status,
                 "error": error,
                 "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
-                "response_time": format(time.time() - startTime),
+                "response_time": time.time() - startTime,
             }
         )
 
@@ -143,7 +143,7 @@ async def list_arcs(request: Request, owned=False):
             f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
         )
         writeLogJson(
-            "arc_file",
+            "arc_list",
             401,
             startTime,
             f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}",
@@ -162,6 +162,19 @@ async def list_arcs(request: Request, owned=False):
             f"{os.environ.get(target)}/api/v4/projects?per_page=1000",
             headers=header,
         )
+    try:
+        arcsJson = arcs.json()
+    except:
+        writeLogJson(
+            "arc_list",
+            500,
+            startTime,
+            f"Error while parsing the list of ARCs!",
+        )
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error while parsing the list of ARCs!",
+        )
 
     if not arcs.ok:
         logging.warning("Access Token of client is expired!")
@@ -170,7 +183,7 @@ async def list_arcs(request: Request, owned=False):
             detail="Your token is expired! Please login again!",
         )
 
-    project_list = Projects(projects=arcs.json())
+    project_list = Projects(projects=arcsJson)
     logging.info("Sent list of Arcs")
     writeLogJson("arc_list", 200, startTime)
     return project_list
@@ -211,6 +224,19 @@ async def public_arcs(target: str):
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="DataHUB currently not available!!",
         )
+    try:
+        requestJson = request.json()
+    except:
+        writeLogJson(
+            "public_arcs",
+            500,
+            startTime,
+            f"Error while parsing the list of ARCs!",
+        )
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error while parsing the list of ARCs!",
+        )
 
     if not request.ok:
         writeLogJson(
@@ -224,7 +250,7 @@ async def public_arcs(target: str):
             detail=f"Error retrieving the arcs! ERROR: {request.content}",
         )
 
-    project_list = Projects(projects=request.json())
+    project_list = Projects(projects=requestJson)
 
     logging.debug("Sent public list of ARCs")
     writeLogJson("public_arcs", 200, startTime)
@@ -259,9 +285,19 @@ async def arc_tree(id: int, request: Request):
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100",
         headers=header,
     )
-
-    if not arc.ok:
+    try:
         arcJson = arc.json()
+    except:
+        writeLogJson(
+            "arc_tree",
+            404,
+            startTime,
+            f"ARC with ID {id} is empty!",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No Content found!"
+        )
+    if not arc.ok:
         logging.error(f"Couldn't find ARC with ID {id}; ERROR: {arc.content[0:100]}")
         writeLogJson(
             "arc_tree",
@@ -271,10 +307,10 @@ async def arc_tree(id: int, request: Request):
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Couldn't find ARC with ID {id}; Error: {arcJson['error']}, {arcJson['error_description']}",
+            detail=f"Couldn't find ARC with ID {id}; Error: {arc.content[0:100]}",
         )
 
-    arc_json = Arc(Arc=arc.json())
+    arc_json = Arc(Arc=arcJson)
     logging.info("Sent info of ARC " + str(id))
     writeLogJson("arc_tree", 200, startTime)
     return arc_json
@@ -308,9 +344,16 @@ async def arc_path(id: int, request: Request, path: str):
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&path={path}",
         headers=header,
     )
+    try:
+        pathJson = arcPath.json()
+    except:
+        pathJson = {
+            "error": "Parsing Error",
+            "error_description": "There was an error parsing the path data for the ARC!",
+        }
+
     # raise error if the given path gives no result
     if not arcPath.ok:
-        pathJson = arcPath.json()
         logging.error(f"Path not found! Path: { path } ; ERROR: {arcPath.content}")
         writeLogJson(
             "arc_path",
@@ -320,10 +363,10 @@ async def arc_path(id: int, request: Request, path: str):
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Path not found! Error: {pathJson['error']}, {pathJson['error_description']}! Try to login again!",
+            detail=f"Path not found! Error: {arcPath.content}! Try to login again!",
         )
 
-    arc_json = Arc(Arc=arcPath.json())
+    arc_json = Arc(Arc=pathJson)
     logging.info(f"Sent info of ARC {id} with path {path}")
     writeLogJson("arc_path", 200, startTime)
     return arc_json
@@ -422,11 +465,24 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
             headers=header,
         )
         logging.info(f"Sent info of {path} from ID: {id}")
+        try:
+            arcFileJson = arcFile.json()
+        except:
+            writeLogJson(
+                "arc_file",
+                500,
+                startTime,
+                f"Error while retrieving the content of the file!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error while retrieving the content of the file!",
+            )
 
         if path.endswith((".txt", ".md", ".html", ".xml")):
             # sanitize content
             # decode the file
-            decoded = base64.b64decode(arcFile.json()["content"]).decode("utf-8")
+            decoded = base64.b64decode(arcFileJson["content"]).decode("utf-8")
 
             # remove script and iframe tags
             decoded = decoded.replace("<script>", "---here was a script tag---")
@@ -438,13 +494,13 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
             encoded = decoded.encode("utf-8")
             encoded = base64.b64encode(encoded)
 
-            fileJson = arcFile.json()
+            fileJson = arcFileJson
             fileJson["content"] = encoded
             writeLogJson("arc_file", 200, startTime)
             return fileJson
         else:
             writeLogJson("arc_file", 200, startTime)
-            return arcFile.json()
+            return arcFileJson
 
 
 # reads out the content of the put request body; writes the content to the corresponding isa file on the storage
@@ -666,7 +722,20 @@ async def createArc(request: Request):
 
     logging.debug(f"Creating new project with payload {project}")
     # we get all the necessary information back from gitlab, like id, main branch,...
-    newArcJson = projectPost.json()
+    try:
+        newArcJson = projectPost.json()
+    except:
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Error while retrieving data for new ARC!",
+        )
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error while retrieving data for new ARC!",
+        )
+
     logging.info(f"Created Arc with Id: {newArcJson['id']}")
 
     # replace empty space with underscores (arccommander can't process spaces in strings)
@@ -1216,7 +1285,14 @@ async def uploadFile(request: Request):
                 response = requests.post(postUrl, headers=headers, json=jsonData)
 
             if not response.ok:
-                responseJson = response.json()
+                try:
+                    responseJson = response.json()
+                    responseJson["error"] != None
+                except:
+                    responseJson = {
+                        "error": "Couldn't upload file",
+                        "error_description": "Couldn't upload pointer file to the ARC!",
+                    }
                 logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
                 writeLogJson(
                     "uploadFile",
@@ -1262,7 +1338,12 @@ async def uploadFile(request: Request):
                     200,
                     startTime,
                 )
-                return response.json()
+                try:
+                    responseJson = response.json()
+                except:
+                    responseJson = {}
+
+                return responseJson
 
             # if filename is not inside the .gitattributes, add it
             elif not requestForm.get("name") in getResponse.text:
@@ -1283,7 +1364,12 @@ async def uploadFile(request: Request):
                     200,
                     startTime,
                 )
-                return response.json()
+                try:
+                    responseJson = response.json()
+                except:
+                    responseJson = {}
+
+                return responseJson
             # if filename already exists, do nothing and just return "File updated"
             else:
                 writeLogJson(
@@ -1381,17 +1467,21 @@ async def getTemplates():
     request = requests.get(
         "https://swate.nfdi4plants.org/api/IProtocolAPIv1/getAllProtocolsWithoutXml"
     )
+    try:
+        templateJson = request.json()
+    except:
+        templateJson = {}
 
     # if swate is down, return error 500
     if not request.ok:
         logging.error(
-            f"There was an error retrieving the swate templates! ERROR: {request.json()}"
+            f"There was an error retrieving the swate templates! ERROR: {templateJson}"
         )
         writeLogJson(
             "getTemplates",
             500,
             startTime,
-            f"There was an error retrieving the swate templates! ERROR: {request.json()}",
+            f"There was an error retrieving the swate templates! ERROR: {templateJson}",
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1399,7 +1489,7 @@ async def getTemplates():
         )
 
     # map the received list to the model 'Templates'
-    template_list = Templates(templates=request.json())
+    template_list = Templates(templates=templateJson)
 
     logging.info("Sent list of swate templates to client!")
     writeLogJson(
@@ -1427,17 +1517,20 @@ async def getTemplate(id: str):
         "https://swate.nfdi4plants.org/api/IProtocolAPIv1/getProtocolById",
         data=payload,
     )
-
+    try:
+        templateJson = request.json()
+    except:
+        templateJson = {}
     # if swate is down (or the desired template somehow not available) return error 400
     if not request.ok:
         logging.error(
-            f"There was an error retrieving the swate template with id {id} ! ERROR: {request.json()}"
+            f"There was an error retrieving the swate template with id {id} ! ERROR: {templateJson}"
         )
         writeLogJson(
             "getTemplate",
             400,
             startTime,
-            f"There was an error retrieving the swate template with id {id} ! ERROR: {request.json()}",
+            f"There was an error retrieving the swate template with id {id} ! ERROR: {templateJson}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1445,7 +1538,7 @@ async def getTemplate(id: str):
         )
 
     # return just the buildingBlocks part of the template (rest is already known)
-    templateBlocks = request.json()["TemplateBuildingBlocks"]
+    templateBlocks = templateJson["TemplateBuildingBlocks"]
 
     logging.info(f"Sending template with id {id} to client!")
     writeLogJson(
@@ -1509,6 +1602,10 @@ async def getTerms(
             logging.debug(
                 f"Getting an specific list of terms for the input '{input}' with parent '{parentName}'!"
             )
+        try:
+            termJson = request.json()
+        except:
+            termJson = {}
     # if there is a timeout, respond with an error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
@@ -1526,13 +1623,13 @@ async def getTerms(
     # if there is a different kind of error, return error 400
     except:
         logging.error(
-            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}"
+            f"There was an error retrieving the terms for '{input}'! ERROR: {termJson}"
         )
         writeLogJson(
             "getTerms",
             400,
             startTime,
-            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}",
+            f"There was an error retrieving the terms for '{input}'! ERROR: {termJson}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1542,7 +1639,7 @@ async def getTerms(
     logging.info(f"Sent a list of terms for '{input}' to client!")
     writeLogJson("getTerms", 200, startTime)
     # return the list of terms found for the given input
-    return request.json()
+    return termJson
 
 
 @router.get(
@@ -1572,6 +1669,10 @@ async def getTermSuggestionsByParentTerm(
         logging.debug(
             f"Getting list of suggestion terms for the parent '{parentName}'!"
         )
+        try:
+            termJson = request.json()
+        except:
+            termJson = {}
     # if there is a timeout, respond with error 504
     except requests.exceptions.Timeout:
         logging.warning("Request took to long! Sending timeout error to client...")
@@ -1589,13 +1690,13 @@ async def getTermSuggestionsByParentTerm(
     # if there is a different kind of error, return error 400
     except:
         logging.error(
-            f"There was an error retrieving the terms for '{parentName}'! ERROR: {request.json()}"
+            f"There was an error retrieving the terms for '{parentName}'! ERROR: {termJson}"
         )
         writeLogJson(
             "getTermSbPT",
             400,
             startTime,
-            f"There was an error retrieving the terms for '{parentName}'! ERROR: {request.json()}",
+            f"There was an error retrieving the terms for '{parentName}'! ERROR: {termJson}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1608,7 +1709,7 @@ async def getTermSuggestionsByParentTerm(
         startTime,
     )
     # return the list of terms found for the given input
-    return request.json()
+    return termJson
 
 
 @router.get(
@@ -1634,6 +1735,10 @@ async def getTermSuggestions(request: Request, input: str, n=20):
             ),
             timeout=7,
         )
+        try:
+            termJson = request.json()
+        except:
+            termJson = {}
 
         logging.debug(f"Getting list of suggestion terms for the input '{input}'!")
     # if there is a timeout, respond with an error 504
@@ -1653,13 +1758,13 @@ async def getTermSuggestions(request: Request, input: str, n=20):
     # if there is a different kind of error, return error 400
     except:
         logging.error(
-            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}"
+            f"There was an error retrieving the terms for '{input}'! ERROR: {termJson}"
         )
         writeLogJson(
             "getTermSugg.",
             400,
             startTime,
-            f"There was an error retrieving the terms for '{input}'! ERROR: {request.json()}",
+            f"There was an error retrieving the terms for '{input}'! ERROR: {termJson}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1672,7 +1777,7 @@ async def getTermSuggestions(request: Request, input: str, n=20):
         startTime,
     )
     # return the list of terms found for the given input
-    return request.json()
+    return termJson
 
 
 @router.put(
@@ -1809,7 +1914,10 @@ async def getChanges(request: Request, id: int):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Commits not found! Error: {commits.content}! Try to login again!",
         )
-    commitJson = commits.json()
+    try:
+        commitJson = commits.json()
+    except:
+        commitJson = {}
 
     response = []
     for entry in commitJson:
@@ -2315,7 +2423,10 @@ async def getUser(request: Request):
             + str(x + 1),
             headers=header,
         )
-        userList += users.json()
+        try:
+            userList += users.json()
+        except:
+            userList += {}
 
     logging.info(f"Sent list of all users of the datahub!")
     writeLogJson("getUser", 200, startTime)
@@ -2413,7 +2524,11 @@ async def getArcUser(request: Request, id: int):
         headers=header,
     )
     if not users.ok:
-        userJson = users.json()
+        try:
+            userJson = users.json()
+            userJson["error"] != None
+        except:
+            userJson = {"error": "Not found!", "error_description": "No user found!"}
         writeLogJson(
             "getArcUser",
             users.status_code,
@@ -2427,7 +2542,12 @@ async def getArcUser(request: Request, id: int):
 
     logging.info(f"Sent list of users for project {id}")
     writeLogJson("getArcUser", 200, startTime)
-    return users.json()
+    try:
+        userList = users.json()
+    except:
+        userList = users.content
+
+    return userList
 
 
 # removes a user from the specific Arc
@@ -2553,7 +2673,6 @@ async def getMetrics(request: Request):
 
     # fill the metrics with respective data
     for entry in jsonLog:
-        # print(time.strptime(entry["date"], "%d/%m/%Y - %H:%M:%S"))
         # calculate the average response time for each entry point
         try:
             average = responseTimes[entry["endpoint"]][0]

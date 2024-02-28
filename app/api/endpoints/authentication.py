@@ -55,7 +55,7 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
             "status": status,
             "error": error,
             "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
-            "response_time": format(time.time() - startTime),
+            "response_time": time.time() - startTime,
         }
     )
 
