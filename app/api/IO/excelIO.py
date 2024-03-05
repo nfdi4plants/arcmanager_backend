@@ -7,6 +7,8 @@ import datetime
 from fastapi import HTTPException
 import openpyxl
 
+from app.models.gitlab.input import sheetContent
+
 
 # reads out the given file and sends the content as json back
 def readIsaFile(path: str, type: str):
@@ -179,9 +181,15 @@ def getSwateSheets(path: str, type: str):
 
 
 # fill a new table column wise with the given data and safe it to the excel file
-def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
+def createSheet(sheetContent: sheetContent, target: str):
     head = []
     content = []
+
+    tableHead = sheetContent.tableHead
+    tableData = sheetContent.tableContent
+    path = sheetContent.path
+    name = sheetContent.name
+    id = sheetContent.id
 
     # loop column by column
     for i, entry in enumerate(tableHead):
@@ -189,7 +197,6 @@ def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
         # loop row by row
         for cell in enumerate(tableData[i]):
             columnData.append(cell[1])
-
         head.append(str(entry["Type"]))
         content.append(columnData)
     df = pd.DataFrame({head[0]: content[0]})
@@ -197,7 +204,10 @@ def createSheet(tableHead, tableData, path: str, id, target: str, name: str):
     content.pop(0)
 
     for i, entry in enumerate(head):
-        df.insert(i + 1, entry, content[i], allow_duplicates=True)
+        try:
+            df.insert(i + 1, entry, content[i], allow_duplicates=True)
+        except:
+            pass
 
     pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{path}"
 

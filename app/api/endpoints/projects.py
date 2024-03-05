@@ -1,7 +1,11 @@
+from typing import Annotated
 from fastapi import (
     APIRouter,
     Body,
+    Cookie,
     Depends,
+    File,
+    Form,
     HTTPException,
     status,
     Response,
@@ -42,10 +46,24 @@ from app.api.IO.excelIO import (
     appendStudy,
 )
 
-from app.models.gitlab.projects import *
-from app.models.gitlab.arc import *
-from app.models.gitlab.commit import *
-from app.models.swate.template import *
+from app.models.gitlab.input import (
+    arcContent,
+    folderContent,
+    newIsa,
+    isaContent,
+    sheetContent,
+    syncAssayContent,
+    syncStudyContent,
+    userContent,
+)
+from app.models.gitlab.projects import Projects
+from app.models.gitlab.arc import Arc
+from app.models.gitlab.commit import Commit
+from app.models.gitlab.file import FileContent
+from app.models.gitlab.user import Users
+from app.models.swate.template import Templates
+from app.models.swate.templateBuildingBlock import TemplateBB
+from app.models.swate.term import Terms
 
 import hashlib
 import tempfile
@@ -132,12 +150,14 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
     summary="Lists your accessible ARCs",
     status_code=status.HTTP_200_OK,
 )
-async def list_arcs(request: Request, owned=False):
+async def list_arcs(
+    request: Request, data: Annotated[str, Cookie()], owned=False
+) -> Projects:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
@@ -193,7 +213,7 @@ async def list_arcs(request: Request, owned=False):
 @router.get(
     "/public_arcs", summary="Lists all public ARCs", status_code=status.HTTP_200_OK
 )
-async def public_arcs(target: str):
+async def public_arcs(target: str) -> Projects:
     startTime = time.time()
     try:
         target = getTarget(target)
@@ -260,12 +280,12 @@ async def public_arcs(target: str):
 
 # get the frontpage tree structure of the arc
 @router.get("/arc_tree", summary="Overview of the ARC", status_code=status.HTTP_200_OK)
-async def arc_tree(id: int, request: Request):
+async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) -> Arc:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client has no rights to view this ARC! Cookies: {request.cookies}"
@@ -320,12 +340,14 @@ async def arc_tree(id: int, request: Request):
 @router.get(
     "/arc_path", summary="Subdirectory of the ARC", status_code=status.HTTP_200_OK
 )
-async def arc_path(id: int, request: Request, path: str):
+async def arc_path(
+    id: int, request: Request, path: str, data: Annotated[str, Cookie()]
+) -> Arc:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
@@ -378,12 +400,14 @@ async def arc_path(id: int, request: Request, path: str):
     summary="Returns the file on the given path",
     status_code=status.HTTP_200_OK,
 )
-async def arc_file(id: int, path: str, request: Request, branch="main"):
+async def arc_file(
+    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+) -> FileContent | list[list]:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client is not authorized to get the file! Cookies: {request.cookies}"
@@ -429,7 +453,7 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
         ).content
 
         # construct path to save on the backend
-        pathName = f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{path}"
+        pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
 
         # create directory for the file to save it, skip if it exists already
         os.makedirs(os.path.dirname(pathName), exist_ok=True)
@@ -505,14 +529,13 @@ async def arc_file(id: int, path: str, request: Request, branch="main"):
 
 # reads out the content of the put request body; writes the content to the corresponding isa file on the storage
 @router.put("/saveFile", summary="Write content to isa file")
-async def saveFile(request: Request):
+async def saveFile(
+    request: Request, isaContent: isaContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
-        # get the changes for the isa file from the body
-        isaContent = json.loads(requestBody)
-        target = data["target"]
+        token = getData(data)
+        target = token["target"]
     except:
         logging.error(
             f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
@@ -530,25 +553,26 @@ async def saveFile(request: Request):
     logging.debug(f"Content of isa file change: {isaContent}")
     # write the content to the isa file and get the name of the edited row
     rowName = writeIsaFile(
-        isaContent["isaPath"],
-        getIsaType(isaContent["isaPath"]),
-        isaContent["isaInput"],
-        isaContent["isaRepo"],
+        isaContent.isaPath,
+        getIsaType(isaContent.isaPath),
+        isaContent.isaInput,
+        isaContent.isaRepo,
         target,
     )
     logging.debug("write content to isa file...")
     # the path of the file on the storage for the commit request
-    pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{isaContent['isaRepo']}/{isaContent['isaPath']}"
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{isaContent.isaRepo}/{isaContent.isaPath}"
 
     logging.debug("committing file to repo...")
     # call the commit function
     try:
         commitResponse = await commitFile(
             request,
-            isaContent["isaRepo"],
-            isaContent["isaPath"],
+            isaContent.isaRepo,
+            isaContent.isaPath,
+            data,
             pathName,
-            isaContent["arcBranch"],
+            isaContent.arcBranch,
             rowName,
         )
     except:
@@ -564,7 +588,7 @@ async def saveFile(request: Request):
             detail="File could not be edited!",
         )
 
-    logging.info(f"Sent file {isaContent['isaPath']} to ARC {isaContent['isaRepo']}")
+    logging.info(f"Sent file {isaContent.isaPath} to ARC {isaContent.isaRepo}")
     writeLogJson(
         "saveFile",
         200,
@@ -576,17 +600,23 @@ async def saveFile(request: Request):
 @router.put("/commitFile", summary="Update the content of the file to the repo")
 # sends the http PUT request to the git to commit the file on the given filepath
 async def commitFile(
-    request: Request, id: int, repoPath, filePath="", branch="main", message=""
+    request: Request,
+    id: int,
+    repoPath,
+    data: Annotated[str, Cookie()],
+    filePath="",
+    branch="main",
+    message="",
 ):
     startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         # if there is no path, there must be file data in the request body
         if filePath == "":
             fileContent = json.loads(requestBody)
-        targetRepo = data["target"]
+        targetRepo = token["target"]
 
     except:
         logging.error(
@@ -608,7 +638,7 @@ async def commitFile(
         commitMessage += ", changed " + message
 
     header = {
-        "Authorization": "Bearer " + data["gitlab"],
+        "Authorization": "Bearer " + token["gitlab"],
         "Content-Type": "application/json",
     }
     # if there is a filePath, read out the file and send it to the gitlab
@@ -660,19 +690,17 @@ async def commitFile(
 @router.post(
     "/createArc", summary="Creates a new Arc", status_code=status.HTTP_201_CREATED
 )
-async def createArc(request: Request):
+async def createArc(
+    request: Request, arcContent: arcContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the data from the body
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
         }
-        arcContent = json.loads(requestBody)
-
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client not logged in for ARC creation! Cookies: {request.cookies}"
@@ -689,9 +717,9 @@ async def createArc(request: Request):
         )
     # read out the new arc properties
     try:
-        name = arcContent["name"]
-        description = arcContent["description"]
-        investIdentifier = arcContent["investIdentifier"]
+        name = arcContent.name
+        description = arcContent.description
+        investIdentifier = arcContent.investIdentifier
     except:
         logging.error(f"Missing content for arc creation! Data: {arcContent}")
         raise HTTPException(
@@ -852,6 +880,7 @@ async def createArc(request: Request):
         id=newArcJson["id"],
         path="isa.investigation.xlsx",
         request=request,
+        data=data,
         branch=newArcJson["default_branch"],
     )
     writeIsaFile(
@@ -859,14 +888,15 @@ async def createArc(request: Request):
         type="investigation",
         newContent=["Investigation Identifier", investIdentifier],
         repoId=newArcJson["id"],
-        location=data["target"],
+        location=token["target"],
     )
 
     await commitFile(
         request=request,
         id=newArcJson["id"],
         repoPath="isa.investigation.xlsx",
-        filePath=f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{newArcJson['id']}/isa.investigation.xlsx",
+        data=data,
+        filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
         branch=newArcJson["default_branch"],
     )
     writeLogJson("createArc", 201, startTime)
@@ -879,19 +909,17 @@ async def createArc(request: Request):
     summary="Creates a new ISA structure",
     status_code=status.HTTP_201_CREATED,
 )
-async def createIsa(request: Request):
+async def createIsa(
+    request: Request, isaContent: newIsa, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the data from the body
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
         }
-        isaContent = json.loads(requestBody)
-
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client not authorized to create new ISA! Cookies: {request.cookies}"
@@ -908,10 +936,10 @@ async def createIsa(request: Request):
 
     # load the isa properties
     try:
-        identifier = isaContent["identifier"]
-        id = isaContent["id"]
-        type = isaContent["type"]
-        branch = isaContent["branch"]
+        identifier = isaContent.identifier
+        id = isaContent.id
+        type = isaContent.type
+        branch = isaContent.branch
     except:
         logging.error(f"Missing Properties for isa! Data: {isaContent}")
         writeLogJson(
@@ -1039,12 +1067,7 @@ async def createIsa(request: Request):
         case "studies":
             # first, get the file
             pathName = f"{type}/{identifier}/isa.study.xlsx"
-            await arc_file(
-                id,
-                path=pathName,
-                branch=branch,
-                request=request,
-            )
+            await arc_file(id, path=pathName, branch=branch, request=request, data=data)
 
             # then write the identifier in the corresponding field
             writeIsaFile(
@@ -1052,40 +1075,40 @@ async def createIsa(request: Request):
                 type="study",
                 newContent=["Study Identifier", identifier],
                 repoId=id,
-                location=data["target"],
+                location=token["target"],
             )
         case "assays":
             # first, get the file
             pathName = f"{type}/{identifier}/isa.assay.xlsx"
-            await arc_file(
-                id,
-                path=pathName,
-                branch=branch,
-                request=request,
-            )
+            await arc_file(id, path=pathName, branch=branch, request=request, data=data)
 
             # then write the identifier in the corresponding field
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                newContent=["Measurement Type", identifier],
+                newContent=["Assay Measurement Type", identifier],
                 repoId=id,
-                location=data["target"],
+                location=token["target"],
             )
             # edit also the file Name field
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                newContent=["File Name", identifier + "/isa.assay.xlsx", ""],
+                newContent=[
+                    "Assay File Name",
+                    f"assays/{identifier}/isa.assay.xlsx",
+                    "",
+                ],
                 repoId=id,
-                location=data["target"],
+                location=token["target"],
             )
     # send the edited file to the repo
     await commitFile(
         request=request,
         id=id,
         repoPath=pathName,
-        filePath=f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{pathName}",
+        data=data,
+        filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{pathName}",
     )
     writeLogJson(
         "createISA",
@@ -1096,18 +1119,29 @@ async def createIsa(request: Request):
 
 
 @router.post(
-    "/uploadFile", summary="Uploads the given file to the repo (with or without lfs)"
+    "/uploadFile",
+    summary="Uploads the given file to the repo (with or without lfs)",
+    status_code=status.HTTP_201_CREATED,
 )
-async def uploadFile(request: Request):
+async def uploadFile(
+    request: Request,
+    data: Annotated[str, Cookie()],
+    file: Annotated[bytes, File()],
+    name: Annotated[str, Form()],
+    id: Annotated[int, Form()],
+    branch: Annotated[str, Form()],
+    path: Annotated[str, Form()],
+    namespace: Annotated[str, Form()],
+    lfs: Annotated[str, Form()],
+    chunkNumber: Annotated[int, Form()] = 0,
+    totalChunks: Annotated[int, Form()] = 1,
+) -> Commit | dict | str:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        # get the data from the body
-        requestForm = await request.form()
-
-        target = getTarget(data["target"])
+        token = getData(data)
+        target = getTarget(token["target"])
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
         }
     except:
@@ -1124,34 +1158,18 @@ async def uploadFile(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    try:
-        chunkNumber = int(requestForm.get("chunkNumber"))
-        totalChunks = int(requestForm.get("totalChunks"))
-    except:
-        chunkNumber = 0
-        totalChunks = 1
-
-    content = await requestForm.get("file").read()
     f = open(
-        os.environ.get("BACKEND_SAVE")
-        + "cache/"
-        + requestForm.get("name")
-        + "."
-        + str(chunkNumber),
+        os.environ.get("BACKEND_SAVE") + "cache/" + name + "." + str(chunkNumber),
         "wb",
     )
-    f.write(content)
+    f.write(file)
     f.close()
     # fullData holds the final file data
     fullData = bytes()
     if chunkNumber + 1 == totalChunks:
         for chunk in range(totalChunks):
             f = open(
-                os.environ.get("BACKEND_SAVE")
-                + "cache/"
-                + requestForm.get("name")
-                + "."
-                + str(chunk),
+                os.environ.get("BACKEND_SAVE") + "cache/" + name + "." + str(chunk),
                 "rb",
             )
             fullData += f.read()
@@ -1160,11 +1178,7 @@ async def uploadFile(request: Request):
         # clear the chunks
         try:
             for chunk in range(totalChunks):
-                os.remove(
-                    os.environ.get("BACKEND_SAVE")
-                    + "cache/"
-                    + f"{requestForm.get('name')}.{chunk}"
-                )
+                os.remove(os.environ.get("BACKEND_SAVE") + "cache/" + f"{name}.{chunk}")
         except:
             pass
 
@@ -1173,7 +1187,7 @@ async def uploadFile(request: Request):
         # open up a new hash
         shasum = hashlib.new("sha256")
 
-        if requestForm.get("lfs") == "true":
+        if lfs == "true":
             logging.debug("Uploading file with lfs...")
 
             # create a new tempfile to store the data
@@ -1199,7 +1213,7 @@ async def uploadFile(request: Request):
                 "operation": "upload",
                 "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
                 "transfers": ["lfs-standalone-file", "basic"],
-                "ref": {"name": f"refs/heads/{requestForm.get('branch')}"},
+                "ref": {"name": f"refs/heads/{branch}"},
                 "hash_algo": "sha256",
             }
 
@@ -1212,9 +1226,9 @@ async def uploadFile(request: Request):
             downloadUrl = "".join(
                 [
                     "https://oauth2:",
-                    data["gitlab"],
+                    token["gitlab"],
                     f"@{os.environ.get(target).split('//')[1]}/",
-                    f"{requestForm.get('namespace')}.git/info/lfs/objects/batch",
+                    f"{namespace}.git/info/lfs/objects/batch",
                 ]
             )
 
@@ -1254,9 +1268,9 @@ async def uploadFile(request: Request):
                 )
 
             # build and upload the new pointer file to the arc
-            repoPath = quote(requestForm.get("path"), safe="")
+            repoPath = quote(path, safe="")
 
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{repoPath}"
+            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}"
 
             pointerContent = (
                 f"version https://git-lfs.github.com/spec/v1\n"
@@ -1264,7 +1278,7 @@ async def uploadFile(request: Request):
             )
 
             headers = {
-                "Authorization": f"Bearer {data['gitlab']}",
+                "Authorization": f"Bearer {token['gitlab']}",
                 "Content-Type": "application/json",
             }
 
@@ -1276,7 +1290,7 @@ async def uploadFile(request: Request):
 
             # check if file already exists
             fileHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{repoPath}?ref={requestForm.get('branch')}",
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
                 headers=header,
             )
             if fileHead.ok:
@@ -1308,24 +1322,24 @@ async def uploadFile(request: Request):
             logging.debug("Uploading pointer file to repo...")
             # logging
             logging.info(
-                f"Uploaded new File {requestForm.get('name')} to repo {requestForm.get('id')} on path: {requestForm.get('branch')} with LFS"
+                f"Uploaded new File {name} to repo {id} on path: {branch} with LFS"
             )
 
             ## add filename to the gitattributes
-            url = f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/.gitattributes/raw?ref={requestForm.get('branch')}"
+            url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
 
-            newLine = f"{requestForm.get('path')} filter=lfs diff=lfs merge=lfs -text\n"
+            newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
 
             getResponse = requests.get(url, headers=headers)
 
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote('.gitattributes', safe='')}"
+            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
 
             # if .gitattributes doesn't exist, create a new one
             if not getResponse.ok:
                 content = newLine
 
                 attributeData = {
-                    "branch": requestForm.get("branch"),
+                    "branch": branch,
                     "content": content,
                     "commit_message": "Create .gitattributes",
                 }
@@ -1346,11 +1360,11 @@ async def uploadFile(request: Request):
                 return responseJson
 
             # if filename is not inside the .gitattributes, add it
-            elif not requestForm.get("name") in getResponse.text:
+            elif not name in getResponse.text:
                 content = getResponse.text + "\n" + newLine
 
                 attributeData = {
-                    "branch": requestForm.get("branch"),
+                    "branch": branch,
                     "content": content,
                     "commit_message": "Update .gitattributes",
                 }
@@ -1383,23 +1397,23 @@ async def uploadFile(request: Request):
         else:
             # check if file already exists
             fileHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}?ref={requestForm.get('branch')}",
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
                 headers=header,
             )
             # if file doesn't exist, upload file
             if not fileHead.ok:
                 # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
                 payload = {
-                    "branch": str(requestForm.get("branch")),
+                    "branch": str(branch),
                     # base64 encoding of the isa file
                     "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Upload of new File {requestForm.get('name')}",
+                    "commit_message": f"Upload of new File {name}",
                     "encoding": "base64",
                 }
 
                 # create the file on the gitlab
                 request = requests.post(
-                    f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}",
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
                     data=json.dumps(payload),
                     headers=header,
                 )
@@ -1408,16 +1422,16 @@ async def uploadFile(request: Request):
             # if file already exists, update the file
             else:
                 payload = {
-                    "branch": str(requestForm.get("branch")),
+                    "branch": branch,
                     # base64 encoding of the isa file
                     "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Updating File {requestForm.get('name')}",
+                    "commit_message": f"Updating File {name}",
                     "encoding": "base64",
                 }
 
                 # update the file to the gitlab
                 request = requests.put(
-                    f"{os.environ.get(target)}/api/v4/projects/{requestForm.get('id')}/repository/files/{quote(requestForm.get('path'), safe='')}",
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
                     data=json.dumps(payload),
                     headers=header,
                 )
@@ -1436,9 +1450,7 @@ async def uploadFile(request: Request):
                 )
 
             # logging
-            logging.info(
-                f"Uploaded new File {requestForm.get('name')} to repo {requestForm.get('id')} on path: {requestForm.get('path')}"
-            )
+            logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")
 
             response = Response(request.content, statusCode)
             writeLogJson(
@@ -1453,7 +1465,7 @@ async def uploadFile(request: Request):
             200,
             startTime,
         )
-        return f"Received chunk {chunkNumber+1} of {totalChunks} for file {requestForm.get('name')}"
+        return f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"
 
 
 @router.get(
@@ -1461,7 +1473,7 @@ async def uploadFile(request: Request):
     summary="Retrieve a list of swate templates",
     status_code=status.HTTP_200_OK,
 )
-async def getTemplates():
+async def getTemplates() -> Templates:
     startTime = time.time()
     # send get request to swate api requesting all templates
     request = requests.get(
@@ -1506,7 +1518,7 @@ async def getTemplates():
     summary="Retrieve the specific template",
     status_code=status.HTTP_200_OK,
 )
-async def getTemplate(id: str):
+async def getTemplate(id: str) -> TemplateBB:
     startTime = time.time()
     # wrap the desired id in an json array
     payload = json.dumps([id])
@@ -1538,7 +1550,7 @@ async def getTemplate(id: str):
         )
 
     # return just the buildingBlocks part of the template (rest is already known)
-    templateBlocks = templateJson["TemplateBuildingBlocks"]
+    templateBlocks = TemplateBB(templateBB=templateJson["TemplateBuildingBlocks"])
 
     logging.info(f"Sending template with id {id} to client!")
     writeLogJson(
@@ -1558,9 +1570,8 @@ async def getTerms(
     input: str,
     parentName: str,
     parentTermAccession: str,
-    request: Request,
     advanced=False,
-):
+) -> Terms:
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
@@ -1638,8 +1649,10 @@ async def getTerms(
 
     logging.info(f"Sent a list of terms for '{input}' to client!")
     writeLogJson("getTerms", 200, startTime)
+    output = Terms(terms=termJson)
+
     # return the list of terms found for the given input
-    return termJson
+    return output
 
 
 @router.get(
@@ -1648,8 +1661,8 @@ async def getTerms(
     status_code=status.HTTP_200_OK,
 )
 async def getTermSuggestionsByParentTerm(
-    request: Request, parentName: str, parentTermAccession: str
-):
+    parentName: str, parentTermAccession: str
+) -> Terms:
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
@@ -1708,8 +1721,10 @@ async def getTermSuggestionsByParentTerm(
         200,
         startTime,
     )
+    output = Terms(terms=termJson)
+
     # return the list of terms found for the given input
-    return termJson
+    return output
 
 
 @router.get(
@@ -1717,7 +1732,7 @@ async def getTermSuggestionsByParentTerm(
     summary="Retrieve Term suggestions by given input",
     status_code=status.HTTP_200_OK,
 )
-async def getTermSuggestions(request: Request, input: str, n=20):
+async def getTermSuggestions(input: str, n=20) -> Terms:
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
@@ -1776,8 +1791,10 @@ async def getTermSuggestions(request: Request, input: str, n=20):
         200,
         startTime,
     )
+    output = Terms(terms=termJson)
+
     # return the list of terms found for the given input
-    return termJson
+    return output
 
 
 @router.put(
@@ -1785,22 +1802,17 @@ async def getTermSuggestions(request: Request, input: str, n=20):
     summary="Update or save changes to a sheet",
     status_code=status.HTTP_200_OK,
 )
-async def saveSheet(request: Request):
+async def saveSheet(
+    request: Request, content: sheetContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the body of the post request
-    requestBody = await request.body()
-
     try:
-        content = json.loads(requestBody)
-        data = getData(request.cookies.get("data"))
-        path = content["path"]
-        projectId = content["id"]
-        target = data["target"]
-        name = content["name"]
+        token = getData(data)
+        target = token["target"]
 
-        # there should be a parent name and an accession set inside of the body
-        templateHead = content["tableHead"]
-        templateContent = content["tableContent"]
+        path = content.path
+        projectId = content.id
+        name = content.name
 
     # if there are either the name or the accession missing, return error 400
     except:
@@ -1817,7 +1829,7 @@ async def saveSheet(request: Request):
         )
 
     # get the file in the backend
-    await arc_file(projectId, path, request)
+    await arc_file(projectId, path, request, data)
 
     pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{projectId}/{path}"
 
@@ -1826,10 +1838,10 @@ async def saveSheet(request: Request):
         name = "sheet1"
 
     # add the new sheet to the file
-    createSheet(templateHead, templateContent, path, projectId, target, name)
+    createSheet(content, target)
 
     # send the edited file back to gitlab
-    response = await commitFile(request, projectId, path, pathName, message=name)
+    response = await commitFile(request, projectId, path, data, pathName, message=name)
     writeLogJson("saveSheet", 200, startTime)
     return str(response)
 
@@ -1839,15 +1851,12 @@ async def saveSheet(request: Request):
     summary="Get the different annotation metadata sheets of an isa file",
     status_code=status.HTTP_200_OK,
 )
-async def getSheets(request: Request, path: str, id, branch="main"):
+async def getSheets(
+    request: Request, path: str, id, data: Annotated[str, Cookie()], branch="main"
+) -> tuple[list, list[str]]:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        target = getTarget(data["target"])
-        header = {
-            "Authorization": "Bearer " + data["gitlab"],
-            "Content-Type": "application/json",
-        }
+        token = getData(data)
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1862,10 +1871,10 @@ async def getSheets(request: Request, path: str, id, branch="main"):
         )
 
     # get the file in the backend
-    await arc_file(id, path, request, branch)
+    await arc_file(id, path, request, data, branch)
 
     # construct path to the backend
-    pathName = f"{os.environ.get('BACKEND_SAVE')}{data['target']}-{id}/{path}"
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
 
     # read out the list of swate sheets
     sheets = getSwateSheets(pathName, getIsaType(path))
@@ -1878,12 +1887,12 @@ async def getSheets(request: Request, path: str, id, branch="main"):
     summary="Get the commit history of the ARC",
     status_code=status.HTTP_200_OK,
 )
-async def getChanges(request: Request, id: int):
+async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1930,12 +1939,12 @@ async def getChanges(request: Request, id: int):
 @router.get(
     "/getStudies", summary="Get a list of current studies", include_in_schema=False
 )
-async def getStudies(request: Request, id: int):
+async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
     startTime = time.time()
     studies = []
     try:
         # request arc studies
-        studiesJson = await arc_path(id=id, request=request, path="studies")
+        studiesJson = await arc_path(id=id, request=request, path="studies", data=data)
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1959,12 +1968,12 @@ async def getStudies(request: Request, id: int):
 @router.get(
     "/getAssays", summary="Get a list of current assays", include_in_schema=False
 )
-async def getAssays(request: Request, id: int):
+async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
     startTime = time.time()
     assays = []
     try:
         # request arc studies
-        assaysJson = await arc_path(id=id, request=request, path="assays")
+        assaysJson = await arc_path(id=id, request=request, path="assays", data=data)
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1986,14 +1995,13 @@ async def getAssays(request: Request, id: int):
 
 
 @router.patch("/syncAssay", summary="Syncs an assay into a study")
-async def syncAssay(request: Request):
+async def syncAssay(
+    request: Request, syncContent: syncAssayContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the data from the body
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
-        fileContent = json.loads(requestBody)
-        target = data["target"]
+        token = getData(data)
+        target = token["target"]
 
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
@@ -2010,27 +2018,27 @@ async def syncAssay(request: Request):
 
     # get the necessary information from the request
     try:
-        id = fileContent["id"]
-        pathToStudy = fileContent["pathToStudy"]
-        pathToAssay = fileContent["pathToAssay"]
-        assayName = fileContent["assayName"]
-        branch = fileContent["branch"]
+        id = syncContent.id
+        pathToStudy = syncContent.pathToStudy
+        pathToAssay = syncContent.pathToAssay
+        assayName = syncContent.assayName
+        branch = syncContent.branch
 
     except:
-        logging.warning(f"Missing Data for Assay sync! Data: {fileContent}")
+        logging.warning(f"Missing Data for Assay sync! Data: {syncContent}")
         writeLogJson(
             "syncAssays",
             400,
             startTime,
-            f"Missing Data for Assay sync! Data: {fileContent}",
+            f"Missing Data for Assay sync! Data: {syncContent}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
 
     # get the two files in the backend
-    await arc_file(id=id, path=pathToAssay, request=request, branch=branch)
-    await arc_file(id, pathToStudy, request, branch)
+    await arc_file(id=id, path=pathToAssay, request=request, branch=branch, data=data)
+    await arc_file(id, pathToStudy, request, data, branch)
 
     assayPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToAssay}"
     studyPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToStudy}"
@@ -2044,6 +2052,7 @@ async def syncAssay(request: Request):
             request,
             id,
             pathToStudy,
+            data,
             studyPath,
             branch,
             f": synced {pathToAssay} to {pathToStudy}",
@@ -2070,14 +2079,13 @@ async def syncAssay(request: Request):
 
 
 @router.patch("/syncStudy", summary="Syncs a study into the investigation file")
-async def syncStudy(request: Request):
+async def syncStudy(
+    request: Request, syncContent: syncStudyContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the data from the body
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
-        fileContent = json.loads(requestBody)
-        target = data["target"]
+        token = getData(data)
+        target = token["target"]
 
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
@@ -2094,26 +2102,28 @@ async def syncStudy(request: Request):
 
     # get the necessary information from the request
     try:
-        id = fileContent["id"]
-        pathToStudy = fileContent["pathToStudy"]
-        studyName = fileContent["studyName"]
-        branch = fileContent["branch"]
+        id = syncStudyContent.id
+        pathToStudy = syncStudyContent.pathToStudy
+        studyName = syncStudyContent.studyName
+        branch = syncStudyContent.branch
 
     except:
-        logging.warning(f"Missing Data for Assay sync! Data: {fileContent}")
+        logging.warning(f"Missing Data for Assay sync! Data: {syncStudyContent}")
         writeLogJson(
             "syncStudy",
             400,
             startTime,
-            f"Missing Data for Assay sync! Data: {fileContent}",
+            f"Missing Data for Assay sync! Data: {syncStudyContent}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"
         )
 
     # get the two files in the backend
-    await arc_file(id=id, path="isa.investigation.xlsx", request=request, branch=branch)
-    await arc_file(id, pathToStudy, request, branch)
+    await arc_file(
+        id=id, path="isa.investigation.xlsx", request=request, data=data, branch=branch
+    )
+    await arc_file(id, pathToStudy, request, data, branch)
 
     investPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/isa.investigation.xlsx"
     studyPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToStudy}"
@@ -2126,6 +2136,7 @@ async def syncStudy(request: Request):
             request,
             id,
             "isa.investigation.xlsx",
+            data,
             investPath,
             branch,
             f": synced {pathToStudy} to ISA investigation",
@@ -2157,15 +2168,17 @@ async def syncStudy(request: Request):
     summary="Deletes the file on the given path",
     status_code=status.HTTP_200_OK,
 )
-async def deleteFile(id: int, path: str, request: Request, branch="main"):
+async def deleteFile(
+    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+):
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
         }
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client is not authorized to delete the file! Cookies: {request.cookies}"
@@ -2212,15 +2225,17 @@ async def deleteFile(id: int, path: str, request: Request, branch="main"):
     summary="Deletes the entire folder on the given path",
     status_code=status.HTTP_200_OK,
 )
-async def deleteFolder(id: int, path: str, request: Request, branch="main"):
+async def deleteFolder(
+    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+):
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
         }
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client is not authorized to delete the folder! Cookies: {request.cookies}"
@@ -2237,7 +2252,7 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
         )
 
     # get the content of the folder
-    folder = await arc_path(id, request, path)
+    folder = await arc_path(id, request, path, data)
 
     # list of all files to be deleted
     payload = []
@@ -2251,7 +2266,7 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
 
             # if its a folder, search the folder for any file
             elif entry.type == "tree":
-                await prepareJson(await arc_path(id, request, entry.path))
+                await prepareJson(await arc_path(id, request, entry.path, data))
 
             # this should never be the case, so pass along anything here
             else:
@@ -2296,19 +2311,18 @@ async def deleteFolder(id: int, path: str, request: Request, branch="main"):
     summary="Creates a folder on the given path",
     status_code=status.HTTP_201_CREATED,
 )
-async def createFolder(request: Request):
+async def createFolder(
+    request: Request, folder: folderContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the data from the body
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
         }
-        folder = json.loads(requestBody)
 
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(
             f"Client not authorized to create new folder! Cookies: {request.cookies}"
@@ -2326,17 +2340,17 @@ async def createFolder(request: Request):
 
     # load the properties
     try:
-        identifier = folder["identifier"]
+        identifier = folder.identifier
         # the identifier must not contain white space
         identifier = identifier.replace(" ", "_")
-        path = folder["path"]
+        path = folder.path
         if path == "":
             path = identifier
         else:
             path = f"{path}/{identifier}"
-        id = folder["id"]
+        id = folder.id
         payload = {
-            "branch": folder["branch"],
+            "branch": folder.branch,
             "content": "",
             "commit_message": "Created new folder " + path,
         }
@@ -2379,12 +2393,12 @@ async def createFolder(request: Request):
 
 # get a list of all users for the datahub
 @router.get("/getUser", summary="Get a list of all users")
-async def getUser(request: Request):
+async def getUser(request: Request, data: Annotated[str, Cookie()]) -> Users:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -2430,7 +2444,10 @@ async def getUser(request: Request):
 
     logging.info(f"Sent list of all users of the datahub!")
     writeLogJson("getUser", 200, startTime)
-    return userList
+
+    output = Users(users=userList)
+
+    return output
 
 
 @router.post(
@@ -2438,18 +2455,17 @@ async def getUser(request: Request):
     summary="Adds a user to the project",
     status_code=status.HTTP_201_CREATED,
 )
-async def addUser(request: Request):
+async def addUser(
+    request: Request, userData: userContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
-    # get the data from the body
-    requestBody = await request.body()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/x-www-form-urlencoded",
         }
-        userData = json.loads(requestBody)
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -2464,13 +2480,13 @@ async def addUser(request: Request):
         )
 
     # get the id and name of the user
-    arcId = userData["id"]
-    name = userData["username"]
-    userId = userData["userId"]
+    arcId = userData.id
+    name = userData.username
+    userId = userData.userId
 
     # look if the user role is set, else set it to 30 (developer)
     try:
-        userRole = userData["role"]
+        userRole = userData.role
     except:
         userRole = 30
 
@@ -2499,12 +2515,14 @@ async def addUser(request: Request):
 
 # get a list of all users for the specific Arc
 @router.get("/getArcUser", summary="Get a list of all members of the arc")
-async def getArcUser(request: Request, id: int):
+async def getArcUser(
+    request: Request, id: int, data: Annotated[str, Cookie()]
+) -> Users:
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
-        header = {"Authorization": "Bearer " + data["gitlab"]}
-        target = getTarget(data["target"])
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -2547,7 +2565,9 @@ async def getArcUser(request: Request, id: int):
     except:
         userList = users.content
 
-    return userList
+    output = Users(users=userList)
+
+    return output
 
 
 # removes a user from the specific Arc
@@ -2555,14 +2575,20 @@ async def getArcUser(request: Request, id: int):
     "/removeUser",
     summary="Removes a user from the project",
 )
-async def removeUser(request: Request, id: int, userId: int, username: str):
+async def removeUser(
+    request: Request,
+    id: int,
+    userId: int,
+    username: str,
+    data: Annotated[str, Cookie()],
+):
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
         }
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -2606,14 +2632,16 @@ async def removeUser(request: Request, id: int, userId: int, username: str):
     "/editUser",
     summary="Edits a user of the project",
 )
-async def editUser(request: Request, id: int, userId: int, username: str, role: int):
+async def editUser(
+    request: Request, userData: userContent, data: Annotated[str, Cookie()]
+):
     startTime = time.time()
     try:
-        data = getData(request.cookies.get("data"))
+        token = getData(data)
         header = {
-            "Authorization": "Bearer " + data["gitlab"],
+            "Authorization": "Bearer " + token["gitlab"],
         }
-        target = getTarget(data["target"])
+        target = getTarget(token["target"])
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -2626,6 +2654,11 @@ async def editUser(request: Request, id: int, userId: int, username: str, role: 
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
         )
+
+    id = userData.id
+    userId = userData.userId
+    username = userData.username
+    role = userData.role
 
     # request to update user with given role
     editRequest = requests.put(
