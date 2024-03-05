@@ -2,39 +2,51 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel, Field
 
 
 class Namespace(BaseModel):
-    id: int
-    name: str
-    path: str
-    kind: str
-    full_path: str
+    id: int = Field(examples=[310])
+    name: str = Field(examples=["Your Name"])
+    path: str = Field(examples=["nickname"])
+    kind: str = Field(examples=["user"])
+    full_path: str = Field(examples=["nickname"])
     parent_id: Any
     avatar_url: Optional[str]
-    web_url: str
+    web_url: str = Field(examples=["https://gitlab.nfdi4plants.de/nickname"])
 
 
 class Project(BaseModel):
-    id: int
-    description: Optional[str]
-    name: str
-    name_with_namespace: str
-    path: str
-    path_with_namespace: str
-    created_at: str
-    default_branch: str
-    tag_list: List
-    topics: List
-    ssh_url_to_repo: str
-    http_url_to_repo: str
-    web_url: str
-    readme_url: Optional[str]
-    avatar_url: Optional[str]
-    forks_count: int
-    star_count: int
-    last_activity_at: str
+    id: int = Field(examples=[230])
+    description: Optional[str] = Field(examples=["this is a description"])
+    name: str = Field(examples=["ArcName"])
+    name_with_namespace: str = Field(examples=["your name/ArcName"])
+    path: str = Field(examples=["ArcName"])
+    path_with_namespace: str = Field(examples=["nickname/ArcName"])
+    created_at: str = Field(examples=["1970-01-01T12:34:56.109Z"])
+    default_branch: str = Field(examples=["main"])
+    tag_list: List = Field(examples=[["ARC", "RNA"]])
+    topics: List = Field(examples=[["ARC", "RNA"]])
+    ssh_url_to_repo: str = Field(
+        examples=["ssh://git@gitlab.nfdi4plants.de/nickname/ArcName.git"]
+    )
+    http_url_to_repo: str = Field(
+        examples=["https://gitlab.nfdi4plants.de/nickname/ArcName.git"]
+    )
+    web_url: str = Field(examples=["https://gitlab.nfdi4plants.de/nickname/ArcName"])
+    readme_url: Optional[str] = Field(
+        examples=[
+            "https://gitlab.nfdi4plants.de/nickname/ArcName/~/blob/main/README.md"
+        ]
+    )
+    avatar_url: Optional[str] = Field(
+        examples=[
+            "https://gitlab.nfdi4plants.de/uploads/~/system/project/avatar/230/avatarName.jpg"
+        ]
+    )
+    forks_count: int = Field(examples=[3])
+    star_count: int = Field(examples=[2])
+    last_activity_at: str = Field(examples=["2024-01-01T12:34:56.373Z"])
     namespace: Namespace
 
 

@@ -102,6 +102,7 @@ async def login(request: Request, datahub: str):
 @router.get(
     "/callback",
     summary="Redirection after successful user login and creation of server-side user session",
+    include_in_schema=False,
 )
 async def callback(request: Request, datahub: str):
     startTime = time.time()
