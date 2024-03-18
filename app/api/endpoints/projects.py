@@ -1086,7 +1086,7 @@ async def createIsa(
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                newContent=["Assay Measurement Type", identifier],
+                newContent=["Measurement Type", identifier],
                 repoId=id,
                 location=token["target"],
             )
@@ -1095,7 +1095,7 @@ async def createIsa(
                 path=pathName,
                 type="assay",
                 newContent=[
-                    "Assay File Name",
+                    "File Name",
                     f"assays/{identifier}/isa.assay.xlsx",
                     "",
                 ],
@@ -1972,7 +1972,7 @@ async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -
     startTime = time.time()
     assays = []
     try:
-        # request arc studies
+        # request arc assays
         assaysJson = await arc_path(id=id, request=request, path="assays", data=data)
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
@@ -2102,18 +2102,18 @@ async def syncStudy(
 
     # get the necessary information from the request
     try:
-        id = syncStudyContent.id
-        pathToStudy = syncStudyContent.pathToStudy
-        studyName = syncStudyContent.studyName
-        branch = syncStudyContent.branch
+        id = syncContent.id
+        pathToStudy = syncContent.pathToStudy
+        studyName = syncContent.studyName
+        branch = syncContent.branch
 
     except:
-        logging.warning(f"Missing Data for Assay sync! Data: {syncStudyContent}")
+        logging.warning(f"Missing Data for Assay sync! Data: {syncContent}")
         writeLogJson(
             "syncStudy",
             400,
             startTime,
-            f"Missing Data for Assay sync! Data: {syncStudyContent}",
+            f"Missing Data for Assay sync! Data: {syncContent}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Data!"

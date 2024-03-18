@@ -282,6 +282,12 @@ def appendAssay(pathToAssay: str, pathToStudy: str, assayName: str):
     if columnLength == 1:
         study["Unnamed: 1"] = ""
 
+    # if the assay has no data and therefore no second column, add one
+    assayColumns = len(assay.columns.to_list())
+
+    if assayColumns == 1:
+        assay["Unnamed: 1"] == ""
+
     # index of the free column
     freeColumn = 0
 
