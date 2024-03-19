@@ -1,12 +1,36 @@
 # ARC validator concept
 
-For now just some random notes. But if we have a concept, this can go here...
+## Ideas how to actually implement
 
-## Proposed implementation of arc-validate
 
-[arc-validate](https://github.com/nfdi4plants/arc-validate) looks really promising! Maybe we should just incorporate it into our backend and somehow transform their output in something we can use
+## From [old arc-validate project](https://github.com/nfdi4plants/arc-validate/tree/main)
 
-## Notes
+*Does not exist anymore like this, saved from past version*
+
+_Filesystem_ tests treat ARC specification-related requirements on ARCs regarding filesystem structure (i.e., the presence and content of specific files and folders) while _ISA_ tests cover both ARC specification as well as the ISA standard (in the form of ISA.NET requirements).
+
+### Filesystem tests
+
+_(WIP)_
+
+### ISA tests
+
+- **Schema**: Tests about the ISA schema format correctness. E.g.:
+  - _Is there an investigation?_
+- **Semantic**: Tests about semantic compliance to ARC specification. E.g.:
+  - _Do all terms have identifiers?_
+  - _Is the ARC CWL-compliant?_
+- **Plausibility**: Tests about scientific plausibility. E.g.:
+  - _Is there a Factor?_
+  - _Does the ISA object make sense from a scientific point of view?_
+
+### Test classification
+
+Test are separated into critical and non-critical.  
+Critical tests are such that concern the primal integrity of the ARC. If these fail, the ARC's integrity is not given and thus does not satisfy the requirements (i.e., the ARC specification) on a basic level.  
+Non-Critical tests revolve around best practices in ARC and ISA structure and annotation and describe the quality of an ARC.  
+If any critical test fails, the validation returns an error exit code while this does not happen if all critical tests succeed.  
+This differentiation is important for, e.g., downstream applications and pipelines, using the output of the validation and behaving differently, according to the result of the validation.
 
 Testing parameters taken from https://github.com/nfdi4plants/arc-validate
 
