@@ -1,6 +1,6 @@
 # ARC validator concept
 
-## Basic criteria
+## (proposed) Basic criteria
 
 - Do files/folders exist?
   - investigation.xlsx
