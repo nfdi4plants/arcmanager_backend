@@ -35,7 +35,7 @@ If any critical test fails, the validation returns an error exit code while this
 - Does the ARC contain a top-level valid CWL (≥v1.2) file? 
 - ~~Is the studies folder present?~~
 - Does each Study in the studies folder have a Study file?
-- Are all Studies present in the studies folder registered in the Investigation file? **?**
+- Are all Studies present in the studies folder registered in the Investigation file?
 - Do all Studies registered in the Investigation file have an identifier?
 - Do all Studies registered in the Investigation file have a Study filepath?
 - Are all Studies registered in the Investigation file present in the filesystem?
@@ -47,7 +47,7 @@ If any critical test fails, the validation returns an error exit code while this
 - Are all Assays registered in the Investigation file or any Study file present in the filesystem?
 - ~~Is the workflows folder present?~~
 - Does every Workflow contain a valid CWL (≥v1.2) file?
-- Is the runs folder present?
+- ~~Is the runs folder present?~~
 - Does every Run contain a valid CWL (≥v1.2) file?
 - Are all in the Annotation Tables described datafile paths present in the filesystem?
 
@@ -61,6 +61,3 @@ Non-Critical tests revolve around best practices in ARC and ISA structure and an
 - Are all Annotation Table terms valid? (i.e., do they have valid TANs (Term Accession Numbers) and TSRs (Term Source REFs)?)
 - Are community-specific data formats used? (i.e., mzML, mzTAB, fastq, fastq.gz, SAM, BAM)
 
-### Missing?
-
-- Firstname + Lastname ?
