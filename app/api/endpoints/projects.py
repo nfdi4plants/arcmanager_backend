@@ -1462,10 +1462,10 @@ async def uploadFile(
     else:
         writeLogJson(
             "uploadFile",
-            200,
+            202,
             startTime,
         )
-        return f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"
+        return Response(json.dumps(f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"),202)
 
 
 @router.get(
@@ -2689,7 +2689,11 @@ async def editUser(
     summary="Returns a json containing the metrics of the api",
     include_in_schema=False,
 )
-async def getMetrics(request: Request):
+async def getMetrics(request: Request, pwd:str):
+    print(os.environ.get("METRICS"))
+    if os.environ.get("METRICS") != pwd:
+        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Wrong Password!")
+
     # load the log json containing the data
     try:
         with open("log.json", "r") as log:
