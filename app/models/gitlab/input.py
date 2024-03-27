@@ -6,6 +6,7 @@ class isaContent(BaseModel):
     isaPath: str = Field(examples=["isa.investigation.xlsx"])
     isaRepo: int = Field(examples=[230])
     arcBranch: str = Field(examples=["main"])
+    multiple: bool = Field(default=False)
 
 
 class arcContent(BaseModel):

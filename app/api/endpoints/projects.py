@@ -174,7 +174,7 @@ async def list_arcs(
         )
     if owned == "true":
         arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?per_page=100&min_access_level=10",
+            f"{os.environ.get(target)}/api/v4/projects?per_page=100&min_access_level=30",
             headers=header,
         )
     else:
@@ -551,14 +551,25 @@ async def saveFile(
         )
 
     logging.debug(f"Content of isa file change: {isaContent}")
-    # write the content to the isa file and get the name of the edited row
-    rowName = writeIsaFile(
-        isaContent.isaPath,
-        getIsaType(isaContent.isaPath),
-        isaContent.isaInput,
-        isaContent.isaRepo,
-        target,
-    )
+
+    rowName = isaContent.isaInput[0]
+    if isaContent.multiple:
+        for entry in isaContent.isaInput:
+            writeIsaFile(isaContent.isaPath,
+            getIsaType(isaContent.isaPath),
+            entry,
+            isaContent.isaRepo,
+            target,)
+        rowName = "Multiple Rows"
+    else:
+        # write the content to the isa file and get the name of the edited row
+        rowName = writeIsaFile(
+            isaContent.isaPath,
+            getIsaType(isaContent.isaPath),
+            isaContent.isaInput,
+            isaContent.isaRepo,
+            target,
+        )
     logging.debug("write content to isa file...")
     # the path of the file on the storage for the commit request
     pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{isaContent.isaRepo}/{isaContent.isaPath}"
@@ -883,10 +894,25 @@ async def createArc(
         data=data,
         branch=newArcJson["default_branch"],
     )
+    # fill in the identifier, name and description of the arc into the investigation file
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Identifier", investIdentifier],
+        repoId=newArcJson["id"],
+        location=token["target"],
+    )
+    writeIsaFile(
+        path="isa.investigation.xlsx",
+        type="investigation",
+        newContent=["Investigation Title", name],
+        repoId=newArcJson["id"],
+        location=token["target"],
+    )
+    writeIsaFile(
+        path="isa.investigation.xlsx",
+        type="investigation",
+        newContent=["Investigation Description", description],
         repoId=newArcJson["id"],
         location=token["target"],
     )
@@ -1077,6 +1103,18 @@ async def createIsa(
                 repoId=id,
                 location=token["target"],
             )
+            # edit also the file Name field
+            writeIsaFile(
+                path=pathName,
+                type="study",
+                newContent=[
+                    "Study File Name",
+                    f"studies/{identifier}/isa.study.xlsx",
+                    "",
+                ],
+                repoId=id,
+                location=token["target"],
+            )
         case "assays":
             # first, get the file
             pathName = f"{type}/{identifier}/isa.assay.xlsx"
@@ -1086,7 +1124,7 @@ async def createIsa(
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                newContent=["Measurement Type", identifier],
+                newContent=["Assay Measurement Type", identifier],
                 repoId=id,
                 location=token["target"],
             )
@@ -1095,7 +1133,7 @@ async def createIsa(
                 path=pathName,
                 type="assay",
                 newContent=[
-                    "File Name",
+                    "Assay File Name",
                     f"assays/{identifier}/isa.assay.xlsx",
                     "",
                 ],
@@ -1465,7 +1503,12 @@ async def uploadFile(
             202,
             startTime,
         )
-        return Response(json.dumps(f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"),202)
+        return Response(
+            json.dumps(
+                f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"
+            ),
+            202,
+        )
 
 
 @router.get(
@@ -2689,8 +2732,7 @@ async def editUser(
     summary="Returns a json containing the metrics of the api",
     include_in_schema=False,
 )
-async def getMetrics(request: Request, pwd:str):
-    print(os.environ.get("METRICS"))
+async def getMetrics(request: Request, pwd: str):
     if os.environ.get("METRICS") != pwd:
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Wrong Password!")
 
