@@ -3,16 +3,23 @@
 ## (proposed) Basic criteria
 
 Do files/folders exist? (content doesn't matter for now)
-- investigation.xlsx
+- investigation.xlsx (redundant)
 - assays
 - studies
 - workflows
 - runs
+- .arc
 
 Is basic metadata in investigation.xlsx?
-- ORCID (Firstname/Lastname needed as well?)
+- ORCID (optional)
+- At least one contact obligatory: **Email**, Maybe Name...
 - Affiliation
-- Title?
-- Description?
+- Title
+- Description
+- Identifier
 
 > Seem to be implmeneted in 'arc-validate' in way or another. Check there if unclear how to implement!
+
+## Advanced
+
+Is everything (study, assay, ...) registered in investigation.xlsx?
