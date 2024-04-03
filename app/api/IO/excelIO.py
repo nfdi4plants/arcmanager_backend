@@ -2,8 +2,6 @@ import pandas as pd
 from json import loads
 import numpy as np
 import os
-from pathlib import Path
-import datetime
 from fastapi import HTTPException
 import openpyxl
 
@@ -54,7 +52,6 @@ def readIsaFile(path: str, type: str):
 def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     # construct the path with the given values (e.g. .../freiburg-33/isa.investigation.xlsx)
     pathName = f"{os.environ.get('BACKEND_SAVE')}{location}-{repoId}/{path}"
-    identifierLocation = 5
 
     # match the correct sheet name with the given type of isa
     match type:
@@ -66,14 +63,12 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
 
             # the intended name stated in the arc specification
             sheetName2 = "isa_study"
-            identifierLocation = 0
 
         case "assay":
             sheetName = "Assay"
 
             # the intended name stated in the arc specification
             sheetName2 = "isa_assay"
-            identifierLocation = 0
 
         case other:
             sheetName = sheetName2 = ""
@@ -120,12 +115,6 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
             .replace(oldContent[isaFile[0:1].columns[x]].values[0], newContent[x])
         )
 
-    # if there is just one column, add a second one to make space for a date
-    if isaFile.shape[1] < 3:
-        isaFile.insert(2, "Unnamed: 2", "")
-
-    # insert the current date next to the identifier to indicate the date since the metadata was last edited
-    isaFile.iat[identifierLocation, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
     with pd.ExcelWriter(
         pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
@@ -319,12 +308,6 @@ def appendAssay(pathToAssay: str, pathToStudy: str, assayName: str):
     for x in range(len(assay)):
         study.iat[assayIndex + x, freeColumn] = assay.iat[x, 1]
 
-    # make space for the date if there are just two columns
-    if len(study.columns) < 3:
-        study["Unnamed: 2"] = ""
-
-    # insert the current date next to the identifier to indicate the date since the metadata was last edited
-    study.iat[0, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
     with pd.ExcelWriter(
         pathToStudy, engine="openpyxl", mode="a", if_sheet_exists="replace"
@@ -411,12 +394,6 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
         for y in range(len(study.columns)):
             invest.iat[rowIndex + x, y] = study.iat[x, y]
 
-    # make space for the date if there are just two columns
-    if len(invest.columns) < 3:
-        invest["Unnamed: 2"] = ""
-
-    # insert the current date next to the identifier to indicate the date since the metadata was last edited
-    invest.iat[5, 2] = datetime.date.today().strftime("%d/%m/%Y")
     # save the changes to the excel file
     with pd.ExcelWriter(
         pathToInvest, engine="openpyxl", mode="a", if_sheet_exists="replace"

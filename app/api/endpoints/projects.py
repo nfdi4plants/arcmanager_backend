@@ -166,7 +166,7 @@ async def list_arcs(
             "arc_list",
             401,
             startTime,
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}",
+            f"Client connected with no valid cookies/Client is not logged in.",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -197,11 +197,19 @@ async def list_arcs(
         )
 
     if not arcs.ok:
-        logging.warning("Access Token of client is expired!")
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="Your token is expired! Please login again!",
-        )
+        logging.warning(arcs.content)
+        try:
+            message = arcsJson["message"]
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=message,
+            )
+        except:
+            error = arcsJson["error"]
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=error + ", " + arcsJson["error_description"],
+            )
 
     project_list = Projects(projects=arcsJson)
     logging.info("Sent list of Arcs")
@@ -294,7 +302,7 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
             "arc_tree",
             401,
             startTime,
-            f"Client has no rights to view this ARC! Cookies: {request.cookies}",
+            f"Client has no rights to view this ARC!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -356,7 +364,7 @@ async def arc_path(
             "arc_path",
             401,
             startTime,
-            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}",
+            f"Client is not authorized to view ARC {id}",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -416,7 +424,7 @@ async def arc_file(
             "arc_file",
             401,
             startTime,
-            f"Client is not authorized to get the file! Cookies: {request.cookies}",
+            f"Client is not authorized to get the file!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -537,14 +545,12 @@ async def saveFile(
         token = getData(data)
         target = token["target"]
     except:
-        logging.error(
-            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
-        )
+        logging.error(f"SaveFile Request couldn't be processed! Body: {request.body}")
         writeLogJson(
             "saveFile",
             401,
             startTime,
-            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}",
+            f"SaveFile Request couldn't be processed! Body: {request.body}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -555,12 +561,14 @@ async def saveFile(
     rowName = isaContent.isaInput[0]
     if isaContent.multiple:
         for entry in isaContent.isaInput:
-            writeIsaFile(isaContent.isaPath,
-            getIsaType(isaContent.isaPath),
-            entry,
-            isaContent.isaRepo,
-            target,)
-        rowName = "Multiple Rows"
+            writeIsaFile(
+                isaContent.isaPath,
+                getIsaType(isaContent.isaPath),
+                entry,
+                isaContent.isaRepo,
+                target,
+            )
+        rowName = "multiple fields"
     else:
         # write the content to the isa file and get the name of the edited row
         rowName = writeIsaFile(
@@ -587,12 +595,12 @@ async def saveFile(
             rowName,
         )
     except:
-        logging.warning(f"Isa file could not be edited! Cookies: {request.cookies}")
+        logging.warning(f"Isa file could not be edited!")
         writeLogJson(
             "saveFile",
             400,
             startTime,
-            f"Isa file could not be edited! Cookies: {request.cookies}",
+            f"Isa file could not be edited!",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -637,7 +645,7 @@ async def commitFile(
             "commitFile",
             400,
             startTime,
-            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}",
+            f"SaveFile Request couldn't be processed! Body: {request.body}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -720,7 +728,7 @@ async def createArc(
             "createArc",
             401,
             startTime,
-            f"Client not logged in for ARC creation! Cookies: {request.cookies}",
+            f"Client not logged in for ARC creation!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -954,7 +962,7 @@ async def createIsa(
             "createISA",
             401,
             startTime,
-            f"Client not authorized to create new ISA! Cookies: {request.cookies}",
+            f"Client not authorized to create new ISA!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
@@ -1190,7 +1198,7 @@ async def uploadFile(
             "uploadFile",
             400,
             startTime,
-            f"uploadFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}",
+            f"uploadFile Request couldn't be processed! Body: {request.body}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
@@ -1906,7 +1914,7 @@ async def getSheets(
             "getSheets",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1942,7 +1950,7 @@ async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) 
             "getChanges",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1994,7 +2002,7 @@ async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) 
             "getStudies",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2023,7 +2031,7 @@ async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -
             "getAssays",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2052,7 +2060,7 @@ async def syncAssay(
             "syncAssays",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2108,7 +2116,7 @@ async def syncAssay(
             "syncAssays",
             401,
             startTime,
-            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}",
+            f"Client is not authorized to commit to ARC!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -2136,7 +2144,7 @@ async def syncStudy(
             "syncStudy",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2192,7 +2200,7 @@ async def syncStudy(
             "syncStudy",
             401,
             startTime,
-            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}",
+            f"Client is not authorized to commit to ARC!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -2230,7 +2238,7 @@ async def deleteFile(
             "deleteFile",
             401,
             startTime,
-            f"Client is not authorized to delete the file! Cookies: {request.cookies}",
+            f"Client is not authorized to delete the file!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -2287,7 +2295,7 @@ async def deleteFolder(
             "deleteFolder",
             401,
             startTime,
-            f"Client is not authorized to delete the folder! Cookies: {request.cookies}",
+            f"Client is not authorized to delete the folder!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -2374,7 +2382,7 @@ async def createFolder(
             "createFolder",
             401,
             startTime,
-            f"Client not authorized to create new folder! Cookies: {request.cookies}",
+            f"Client not authorized to create new folder!",
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -2448,7 +2456,7 @@ async def getUser(request: Request, data: Annotated[str, Cookie()]) -> Users:
             "getUser",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2515,7 +2523,7 @@ async def addUser(
             "addUser",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2572,7 +2580,7 @@ async def getArcUser(
             "getArcUser",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2638,7 +2646,7 @@ async def removeUser(
             "removeUser",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2691,7 +2699,7 @@ async def editUser(
             "editUser",
             401,
             startTime,
-            f"No authorized Cookie found! Cookies: {request.cookies}",
+            f"No authorized Cookie found!",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
