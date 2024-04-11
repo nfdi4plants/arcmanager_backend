@@ -37,6 +37,7 @@ from urllib.parse import quote
 
 # functions to read and write isa files
 from app.api.IO.excelIO import (
+    readExcelFile,
     readIsaFile,
     getIsaType,
     writeIsaFile,
@@ -410,7 +411,7 @@ async def arc_path(
 )
 async def arc_file(
     id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
-) -> FileContent | list[list]:
+) -> FileContent | list[list]|dict:
     startTime = time.time()
     try:
         token = getData(data)
@@ -530,6 +531,10 @@ async def arc_file(
             fileJson["content"] = encoded
             writeLogJson("arc_file", 200, startTime)
             return fileJson
+        elif path.endswith(".xlsx"):
+            decoded = base64.b64decode(arcFileJson["content"])
+            excelJson = readExcelFile(decoded)
+            return excelJson
         else:
             writeLogJson("arc_file", 200, startTime)
             return arcFileJson
@@ -747,7 +752,12 @@ async def createArc(
         )
 
     # here we create the project with the readme file
-    project = {"name": name, "description": description, "initialize_with_readme": True}
+    project = {
+        "name": name,
+        "description": description,
+        "initialize_with_readme": True,
+        "visibility": "private",
+    }
 
     projectPost = requests.post(
         os.environ.get(target) + "/api/v4/projects",
@@ -1700,7 +1710,13 @@ async def getTerms(
 
     logging.info(f"Sent a list of terms for '{input}' to client!")
     writeLogJson("getTerms", 200, startTime)
-    output = Terms(terms=termJson)
+    try:
+        output = Terms(terms=termJson)
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No valid Terms could be found/parsed!",
+        )
 
     # return the list of terms found for the given input
     return output
@@ -1772,7 +1788,13 @@ async def getTermSuggestionsByParentTerm(
         200,
         startTime,
     )
-    output = Terms(terms=termJson)
+    try:
+        output = Terms(terms=termJson)
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No valid Terms could be found/parsed!",
+        )
 
     # return the list of terms found for the given input
     return output
@@ -1842,7 +1864,13 @@ async def getTermSuggestions(input: str, n=20) -> Terms:
         200,
         startTime,
     )
-    output = Terms(terms=termJson)
+    try:
+        output = Terms(terms=termJson)
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No valid Terms could be found/parsed!",
+        )
 
     # return the list of terms found for the given input
     return output

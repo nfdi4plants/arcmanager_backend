@@ -401,3 +401,20 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
         invest.to_excel(writer, sheet_name=sheetName, merge_cells=False, index=False)
 
     return invest.to_json()
+
+
+# reads out the given file and sends the content as json back
+def readExcelFile(file: bytes):
+    # initiate isaFile structure
+    excelFile: pd.DataFrame
+
+    # read the file
+    try:
+        excelFile = pd.read_excel(file, engine="openpyxl")
+    except:
+        excelFile = pd.read_excel(file, 0, engine="openpyxl")
+
+    # parse the dataframe into json and return it
+    parsed = loads(excelFile.to_json(orient="split"))
+
+    return parsed

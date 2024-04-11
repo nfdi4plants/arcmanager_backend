@@ -1,5 +1,6 @@
 import json
-from fastapi import APIRouter, Request, Response, status
+from typing import Annotated
+from fastapi import APIRouter, Cookie, Request, Response, status
 from fastapi.responses import RedirectResponse
 from starlette.config import Config
 from app.api.endpoints.projects import getUserName
@@ -67,10 +68,10 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
     # redirect_uri = (
-    #    "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    #    f"http://localhost:8000/arcmanager/api/v1/auth/callback?datahub={datahub}"
     # )
     redirect_uri = (
-        "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
+        f"https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub={datahub}"
     )
     try:
         # construct authorization url for requested datahub and redirect
@@ -108,7 +109,6 @@ async def callback(request: Request, datahub: str):
     startTime = time.time()
     # response = RedirectResponse("http://localhost:5173")
     response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
-
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
@@ -128,17 +128,16 @@ async def callback(request: Request, datahub: str):
         raise OAuthError(description="Failed retrieving the token data")
 
     userInfo = token.get("userinfo")["sub"]
-    cookieData = {
-        "gitlab": access_token,
-        "target": datahub,
-    }
     # read out private key from .env
     pr_key = (
         b"-----BEGIN RSA PRIVATE KEY-----\n"
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
-
+    cookieData = {
+        "gitlab": access_token,
+        "target": datahub,
+    }
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
