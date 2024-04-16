@@ -7,6 +7,19 @@ import openpyxl
 
 from app.models.gitlab.input import sheetContent
 
+from fsspreadsheet.xlsx import Xlsx
+from fsspreadsheet.workbook import FsWorkbook, FsWorksheet
+
+
+def getRowIndex(name: str, worksheet: FsWorksheet):
+    firstColumn = FsWorksheet.get_column_at(1, worksheet)
+
+    for x in range(1, firstColumn.MaxRowIndex):
+        if name == firstColumn.Item(x).Value:
+            return x
+
+    return -1
+
 
 # reads out the given file and sends the content as json back
 def readIsaFile(path: str, type: str):
@@ -53,29 +66,44 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     # construct the path with the given values (e.g. .../freiburg-33/isa.investigation.xlsx)
     pathName = f"{os.environ.get('BACKEND_SAVE')}{location}-{repoId}/{path}"
 
+    importIsa = Xlsx.from_xlsx_file(pathName)
     # match the correct sheet name with the given type of isa
+
+    sheetIndex = -1
     match type:
         case "investigation":
             sheetName = "isa_investigation"
 
         case "study":
-            sheetName = "Study"
+            sheetName2 = "Study"
 
             # the intended name stated in the arc specification
-            sheetName2 = "isa_study"
+            sheetName = "isa_study"
 
         case "assay":
-            sheetName = "Assay"
+            sheetName2 = "Assay"
 
             # the intended name stated in the arc specification
-            sheetName2 = "isa_assay"
+            sheetName = "isa_assay"
 
         case other:
             sheetName = sheetName2 = ""
 
+    # get the index of the correct sheet
+    for i, sheet in enumerate(FsWorkbook.get_worksheets(importIsa)):
+        if sheet.name == sheetName or sheetName == sheetName2:
+            sheetIndex = i
+            break
+
+    if sheetIndex > -1:
+        sheetData = FsWorkbook.get_worksheets(importIsa)[sheetIndex]
+    else:
+        sheetData = FsWorkbook.get_worksheets(importIsa)[0]
+
     # read the file
     try:
         isaFile = pd.read_excel(pathName, sheet_name=sheetName, engine="openpyxl")
+
     except:
         try:
             sheetName = sheetName2
@@ -84,42 +112,64 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
             sheetName = 0
             isaFile = pd.read_excel(pathName, 0, engine="openpyxl")
 
-    # replace nan values with empty strings
-    isaFile = isaFile.fillna("")
+    try:
+        rowIndex = getRowIndex(newContent[0], sheetData)
 
-    # get the id of the row to edit
-    id = isaFile.index[isaFile[isaFile[0:1].columns[0]] == newContent[0]].values[0]
+        for x in range(1, len(newContent)):
+            if newContent[x] != None and newContent[x] != "":
+                sheetData.SetValueAt(newContent[x], rowIndex, x + 1)
+        try:
+            importIsa.RemoveWorksheet(sheetName)
+        except:
+            importIsa.RemoveWorksheet(sheetName2)
 
-    # get the current content to know what to replace
-    oldContent = isaFile[id : id + 1]
+        importIsa.AddWorksheet(sheetData)
 
-    # Here we replace every entry in the corresponding field with the new value (column by column)
-    for x in range(1, len(newContent)):
-        # if there are new fields in newContent insert a new column "Unnamed: number" with empty fields
-        if x > oldContent.count(axis="columns").values[0] - 1:
-            try:
-                isaFile.insert(x, "Unnamed: " + str(x), "")
-                # add the new field to old content to extent its length
-                oldContent.insert(x, "Unnamed: " + str(x), "")
-            except:
-                isaFile.insert(x, "Unnamed")
-                oldContent.insert(x, "Unnamed")
-
-        # get the name of the current column
-        columnName = isaFile[id : id + 1].columns[x]
-
-        # read out the value on the row with the given id and the current column and replace it with the new value
-        isaFile[id : id + 1].at[id, columnName] = (
-            isaFile[id : id + 1]
-            .at[id, columnName]
-            .replace(oldContent[isaFile[0:1].columns[x]].values[0], newContent[x])
+        Xlsx.to_xlsx_file(
+            pathName,
+            importIsa,
         )
+        return FsWorksheet.get_row_at(rowIndex, sheetData).Item(1).Value
+    except:
 
-    # save the changes to the excel file
-    with pd.ExcelWriter(
-        pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
-    ) as writer:
-        isaFile.to_excel(writer, sheet_name=sheetName, merge_cells=False, index=False)
+        # replace nan values with empty strings
+        isaFile = isaFile.fillna("")
+
+        # get the id of the row to edit
+        id = isaFile.index[isaFile[isaFile[0:1].columns[0]] == newContent[0]].values[0]
+
+        # get the current content to know what to replace
+        oldContent = isaFile[id : id + 1]
+
+        # Here we replace every entry in the corresponding field with the new value (column by column)
+        for x in range(1, len(newContent)):
+            # if there are new fields in newContent insert a new column "Unnamed: number" with empty fields
+            if x > oldContent.count(axis="columns").values[0] - 1:
+                try:
+                    isaFile.insert(x, "Unnamed: " + str(x), "")
+                    # add the new field to old content to extent its length
+                    oldContent.insert(x, "Unnamed: " + str(x), "")
+                except:
+                    isaFile.insert(x, "Unnamed")
+                    oldContent.insert(x, "Unnamed")
+
+            # get the name of the current column
+            columnName = isaFile[id : id + 1].columns[x]
+
+            # read out the value on the row with the given id and the current column and replace it with the new value
+            isaFile[id : id + 1].at[id, columnName] = (
+                isaFile[id : id + 1]
+                .at[id, columnName]
+                .replace(oldContent[isaFile[0:1].columns[x]].values[0], newContent[x])
+            )
+
+        # save the changes to the excel file
+        with pd.ExcelWriter(
+            pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
+        ) as writer:
+            isaFile.to_excel(
+                writer, sheet_name=sheetName, merge_cells=False, index=False
+            )
 
     # return the name of the row back
     return isaFile.iat[id, 0]

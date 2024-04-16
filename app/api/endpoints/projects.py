@@ -411,7 +411,7 @@ async def arc_path(
 )
 async def arc_file(
     id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
-) -> FileContent | list[list]|dict:
+) -> FileContent | list[list] | dict:
     startTime = time.time()
     try:
         token = getData(data)
@@ -1538,10 +1538,13 @@ async def getTemplates() -> Templates:
     startTime = time.time()
     # send get request to swate api requesting all templates
     request = requests.get(
-        "https://swate.nfdi4plants.org/api/IProtocolAPIv1/getAllProtocolsWithoutXml"
+        "https://swate-alpha.nfdi4plants.org/api/ITemplateAPIv1/getTemplates"
     )
     try:
         templateJson = request.json()
+        templateList = []
+        for x in templateJson:
+            templateList.append(json.loads(x))
     except:
         templateJson = {}
 
@@ -1562,7 +1565,7 @@ async def getTemplates() -> Templates:
         )
 
     # map the received list to the model 'Templates'
-    template_list = Templates(templates=templateJson)
+    template_list = Templates(templates=templateList)
 
     logging.info("Sent list of swate templates to client!")
     writeLogJson(
