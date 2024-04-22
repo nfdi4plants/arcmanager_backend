@@ -101,7 +101,6 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
             valid["Assays"].append(
                 {entry: checkContent(assay, ["dataset", "protocols", "isa.assay.xlsx"])}
             )
-
         # here we check the content of every study whether the folders "resources" and "protocols are present", as well if the study file is present
         for entry in studies:
             study = await arc_path(id, request, f"studies/{entry}", data)
@@ -109,15 +108,16 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
                 {
                     entry: checkContent(
                         study, ["resources", "protocols", "isa.study.xlsx"]
-                    ),
-                    "identifier": await validateStudy(
-                        request, id, f"studies/{entry}", data
-                    ),
+                    )
+                    # TODO: Fix validation at validateStudy and re-implement
+                    # "identifier": await validateStudy(
+                    #     request, id, f"studies/{entry}", data
+                    # ),
                 }
             )
-
         # add the results of the investigation validation to the valid dict
-        valid["investigation"] = await validateInvestigation(request, id, data)
+        # TODO: Fix validation at validateInvest and re-implement
+        # valid["investigation"] = await validateInvestigation(request, id, data)
 
     # save the response time and return the dict to the user
     writeLogJson("validateArc", 200, startTime)
@@ -132,6 +132,7 @@ async def validateInvestigation(
     startTime = time.time()
     ## here we start checking the fields of the investigation file
     # to check the content of the investigation file, we first need to retrieve it
+    # TODO: Does not find the file!
     try:
         investigation: list = await arc_file(
             id, "isa.investigation.xlsx", request, data

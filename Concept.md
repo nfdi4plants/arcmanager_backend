@@ -1,6 +1,6 @@
 # ARC validator concept
 
-## (proposed) Basic criteria
+## DONE basic criteria
 
 Do files/folders exist? (content doesn't matter for now)
 - investigation.xlsx (redundant)
@@ -9,6 +9,8 @@ Do files/folders exist? (content doesn't matter for now)
 - workflows
 - runs
 - .arc
+
+## Implement Basic criteria
 
 Is basic metadata in investigation.xlsx?
 - ORCID (optional)
