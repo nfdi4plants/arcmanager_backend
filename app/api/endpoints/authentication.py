@@ -1,5 +1,6 @@
 import json
-from fastapi import APIRouter, Request, Response, status
+from typing import Annotated
+from fastapi import APIRouter, Cookie, Request, Response, status
 from fastapi.responses import RedirectResponse
 from starlette.config import Config
 from app.api.endpoints.projects import getUserName
@@ -12,6 +13,8 @@ router = APIRouter()
 
 import jwt
 import os
+
+import time
 
 ## Read Oauth client info from .env for production
 config = Config(".env")
@@ -43,14 +46,32 @@ oauth.register(
 )
 
 
+def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
+    with open("log.json", "r") as log:
+        jsonLog = json.load(log)
+
+    jsonLog.append(
+        {
+            "endpoint": endpoint,
+            "status": status,
+            "error": error,
+            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+            "response_time": time.time() - startTime,
+        }
+    )
+
+    with open("log.json", "w") as logWrite:
+        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+
+
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
     # redirect_uri = (
-    #    "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=" + datahub
+    #    f"http://localhost:8000/arcmanager/api/v1/auth/callback?datahub={datahub}"
     # )
     redirect_uri = (
-        "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=" + datahub
+        f"https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub={datahub}"
     )
     try:
         # construct authorization url for requested datahub and redirect
@@ -82,11 +103,12 @@ async def login(request: Request, datahub: str):
 @router.get(
     "/callback",
     summary="Redirection after successful user login and creation of server-side user session",
+    include_in_schema=False,
 )
 async def callback(request: Request, datahub: str):
+    startTime = time.time()
     # response = RedirectResponse("http://localhost:5173")
     response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
-
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
@@ -106,17 +128,16 @@ async def callback(request: Request, datahub: str):
         raise OAuthError(description="Failed retrieving the token data")
 
     userInfo = token.get("userinfo")["sub"]
-    cookieData = {
-        "gitlab": access_token,
-        "target": datahub,
-    }
     # read out private key from .env
     pr_key = (
         b"-----BEGIN RSA PRIVATE KEY-----\n"
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
-
+    cookieData = {
+        "gitlab": access_token,
+        "target": datahub,
+    }
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
@@ -133,6 +154,7 @@ async def callback(request: Request, datahub: str):
     response.delete_cookie("error")
 
     request.session.clear()
+    writeLogJson("callback", 307, startTime)
     return response
 
 
