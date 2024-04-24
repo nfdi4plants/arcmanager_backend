@@ -82,9 +82,7 @@ async def getUser(request: Request, data: Annotated[str, Cookie()]) -> Users:
     logging.info(f"Sent list of all users of the datahub!")
     writeLogJson("getUser", 200, startTime)
 
-    output = Users(users=userList)
-
-    return output
+    return Users(users=userList)
 
 
 @router.post(
@@ -202,9 +200,7 @@ async def getArcUser(
     except:
         userList = users.content
 
-    output = Users(users=userList)
-
-    return output
+    return Users(users=userList)
 
 
 # removes a user from the specific Arc

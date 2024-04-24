@@ -43,8 +43,8 @@ origins = [
     "https://nfdi4plants.de",
 ]
 
-# requests module tries ipv6 first for every request which creates problems with the plantmicrobe hub; this disables ipv6 and forces ipv4, solving the issue for now
-urllib3.util.connection.HAS_IPV6 = False
+# requests module tries ipv6 first for every request which creates problems with the plantmicrobe hub; this disables ipv6 and forces ipv4, solving the issue for now ---- currently disabled as ipv6 seems to be working fine for now
+# urllib3.util.connection.HAS_IPV6 = False
 
 app.add_middleware(
     CORSMiddleware,

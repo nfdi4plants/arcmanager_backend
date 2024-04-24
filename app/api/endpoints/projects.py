@@ -3,7 +3,6 @@ from fastapi import (
     APIRouter,
     Body,
     Cookie,
-    Depends,
     File,
     Form,
     HTTPException,
@@ -109,10 +108,7 @@ def getData(cookie: str):
         + b"\n-----END PUBLIC KEY-----"
     )
 
-    # decode the cookie data
-    data = jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
-
-    return data
+    return jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
 
 
 # writes the log entry into the json log file
@@ -204,10 +200,9 @@ async def list_arcs(
                 detail=error + ", " + arcsJson["error_description"],
             )
 
-    project_list = Projects(projects=arcsJson)
     logging.info("Sent list of Arcs")
     writeLogJson("arc_list", 200, startTime)
-    return project_list
+    return Projects(projects=arcsJson)
 
 
 # get a list of all public arcs
@@ -271,12 +266,10 @@ async def public_arcs(target: str) -> Projects:
             detail=f"Error retrieving the arcs! ERROR: {request.content}",
         )
 
-    project_list = Projects(projects=requestJson)
-
     logging.debug("Sent public list of ARCs")
     writeLogJson("public_arcs", 200, startTime)
 
-    return project_list
+    return Projects(projects=requestJson)
 
 
 # get the frontpage tree structure of the arc
@@ -331,10 +324,9 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
             detail=f"Couldn't find ARC with ID {id}; Error: {arc.content[0:100]}",
         )
 
-    arc_json = Arc(Arc=arcJson)
     logging.info("Sent info of ARC " + str(id))
     writeLogJson("arc_tree", 200, startTime)
-    return arc_json
+    return Arc(Arc=arcJson)
 
 
 # get a specific tree structure for the given path
@@ -389,10 +381,9 @@ async def arc_path(
             detail=f"Path not found! Error: {arcPath.content}! Try to login again!",
         )
 
-    arc_json = Arc(Arc=pathJson)
     logging.info(f"Sent info of ARC {id} with path {path}")
     writeLogJson("arc_path", 200, startTime)
-    return arc_json
+    return Arc(Arc=pathJson)
 
 
 # gets the specific file on the given path and either saves it on the backend storage (for isa files) or sends the content directly
@@ -525,8 +516,7 @@ async def arc_file(
             return fileJson
         elif path.endswith(".xlsx"):
             decoded = base64.b64decode(arcFileJson["content"])
-            excelJson = readExcelFile(decoded)
-            return excelJson
+            return readExcelFile(decoded)
         else:
             writeLogJson("arc_file", 200, startTime)
             return arcFileJson
@@ -791,12 +781,9 @@ async def createArc(
     investIdentifier = investIdentifier.replace(" ", "_")
 
     ## commit the folders and the investigation isa to the repo
-    arcData = []
 
     # fill the payload with all the files and folders
-
-    # isa investigation
-    arcData.append(
+    arcData = [
         {
             "action": "create",
             "file_path": "isa.investigation.xlsx",
@@ -807,52 +794,33 @@ async def createArc(
                 ).read()
             ).decode("utf-8"),
             "encoding": "base64",
-        }
-    )
-
-    # .arc folder
-    arcData.append(
+        },
         {
             "action": "create",
             "file_path": ".arc/.gitkeep",
             "content": None,
-        }
-    )
-    # assays
-    arcData.append(
+        },
         {
             "action": "create",
             "file_path": "assays/.gitkeep",
             "content": None,
-        }
-    )
-
-    # runs
-    arcData.append(
+        },
         {
             "action": "create",
             "file_path": "runs/.gitkeep",
             "content": None,
-        }
-    )
-
-    # studies
-    arcData.append(
+        },
         {
             "action": "create",
             "file_path": "studies/.gitkeep",
             "content": None,
-        }
-    )
-
-    # workflows
-    arcData.append(
+        },
         {
             "action": "create",
             "file_path": "workflows/.gitkeep",
             "content": None,
-        }
-    )
+        },
+    ]
 
     # the arc.cwl
     # currently disabled, as an cwl is no longer required
@@ -993,12 +961,11 @@ async def createIsa(
     identifier = identifier.replace(" ", "_")
 
     ## commit the folders and the investigation isa to the repo
-    isaData = []
 
     match type:
         # if its a study, add a copy of an empty study file found in the backend
         case "studies":
-            isaData.append(
+            isaData = [
                 {
                     "action": "create",
                     "file_path": f"{type}/{identifier}/isa.study.xlsx",
@@ -1009,19 +976,16 @@ async def createIsa(
                         ).read()
                     ).decode("utf-8"),
                     "encoding": "base64",
-                }
-            )
-
-            isaData.append(
+                },
                 {
                     "action": "create",
                     "file_path": f"{type}/{identifier}/resources/.gitkeep",
                     "content": None,
-                }
-            )
+                },
+            ]
         # if its an assay, add a copy of an empty assay file from the backend
         case "assays":
-            isaData.append(
+            isaData = [
                 {
                     "action": "create",
                     "file_path": f"{type}/{identifier}/isa.assay.xlsx",
@@ -1032,16 +996,14 @@ async def createIsa(
                         ).read()
                     ).decode("utf-8"),
                     "encoding": "base64",
-                }
-            )
-
-            isaData.append(
+                },
                 {
                     "action": "create",
                     "file_path": f"{type}/{identifier}/dataset/.gitkeep",
                     "content": None,
-                }
-            )
+                },
+            ]
+
         # if its somehow neither an assay or study to be created
         case other:
             raise HTTPException(
@@ -1166,6 +1128,7 @@ async def createIsa(
     return commitRequest.content
 
 
+# either caches the given byte chunk or uploads the file directly (merges all the byte chunks as soon as all have been received)
 @router.post(
     "/uploadFile",
     summary="Uploads the given file to the repo (with or without lfs)",
@@ -1214,6 +1177,8 @@ async def uploadFile(
     f.close()
     # fullData holds the final file data
     fullData = bytes()
+
+    # if the current chunk is the last chunk, merge all chunks together and write them into fullData
     if chunkNumber + 1 == totalChunks:
         for chunk in range(totalChunks):
             f = open(
@@ -1230,11 +1195,10 @@ async def uploadFile(
         except:
             pass
 
-        # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
-
         # open up a new hash
         shasum = hashlib.new("sha256")
 
+        # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
         if lfs == "true":
             logging.debug("Uploading file with lfs...")
 
@@ -1521,6 +1485,7 @@ async def uploadFile(
         )
 
 
+# returns a list of the last 100 changes made to the ARC
 @router.get(
     "/getChanges",
     summary="Get the commit history of the ARC",
@@ -1567,20 +1532,19 @@ async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) 
     except:
         commitJson = {}
 
-    response = []
-    for entry in commitJson:
-        response.append(f"{entry['authored_date'].split('T')[0]}: {entry['title']}")
-
     writeLogJson("getChanges", 200, startTime)
-    return response
+    return [
+        f"{entry['authored_date'].split('T')[0]}: {entry['title']}"
+        for entry in commitJson
+    ]
 
 
+# returns a list of all study names
 @router.get(
     "/getStudies", summary="Get a list of current studies", include_in_schema=False
 )
 async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
     startTime = time.time()
-    studies = []
     try:
         # request arc studies
         studiesJson = await arc_path(id=id, request=request, path="studies", data=data)
@@ -1596,20 +1560,17 @@ async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) 
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
         )
-    # if its a folder, its a study
-    for x in studiesJson.Arc:
-        if x.type == "tree":
-            studies.append(x.name)
+
     writeLogJson("getStudies", 200, startTime)
-    return studies
+    return [x.name for x in studiesJson.Arc if x.type == "tree"]
 
 
+# returns a list of all assay names
 @router.get(
     "/getAssays", summary="Get a list of current assays", include_in_schema=False
 )
 async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
     startTime = time.time()
-    assays = []
     try:
         # request arc assays
         assaysJson = await arc_path(id=id, request=request, path="assays", data=data)
@@ -1625,14 +1586,12 @@ async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
         )
-    # if its a folder, its an assay
-    for x in assaysJson.Arc:
-        if x.type == "tree":
-            assays.append(x.name)
+
     writeLogJson("getAssays", 200, startTime)
-    return assays
+    return [x.name for x in assaysJson.Arc if x.type == "tree"]
 
 
+# writes all the assay data into the isa file of the selected study (adds a new column with the data)
 @router.patch("/syncAssay", summary="Syncs an assay into a study")
 async def syncAssay(
     request: Request, syncContent: syncAssayContent, data: Annotated[str, Cookie()]
@@ -1717,6 +1676,7 @@ async def syncAssay(
     return str(commitResponse)
 
 
+# writes all the study data into the investigation file (appends the rows of the study to the investigation)
 @router.patch("/syncStudy", summary="Syncs a study into the investigation file")
 async def syncStudy(
     request: Request, syncContent: syncStudyContent, data: Annotated[str, Cookie()]

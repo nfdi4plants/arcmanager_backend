@@ -34,6 +34,7 @@ logging.basicConfig(
 )
 
 
+# sends back the list of templates used by the swate alpha
 @router.get(
     "/getTemplates",
     summary="Retrieve a list of swate templates",
@@ -47,9 +48,7 @@ async def getTemplates() -> Templates:
     )
     try:
         templateJson = request.json()
-        templateList = []
-        for x in templateJson:
-            templateList.append(json.loads(x))
+        templateList = [json.loads(x) for x in templateJson]
 
         # include list of custom templates
         templatePath = os.environ.get("BACKEND_SAVE") + "templates"
@@ -80,9 +79,6 @@ async def getTemplates() -> Templates:
             detail="Couldn't receive swate templates",
         )
 
-    # map the received list to the model 'Templates'
-    template_list = Templates(templates=templateList)
-
     logging.info("Sent list of swate templates to client!")
     writeLogJson(
         "getTemplates",
@@ -90,9 +86,10 @@ async def getTemplates() -> Templates:
         startTime,
     )
     # return the templates
-    return template_list
+    return Templates(templates=templateList)
 
 
+# gets a specific template by its id (from swate) UNUSED
 @router.get(
     "/getTemplate",
     summary="Retrieve the specific template",
@@ -129,18 +126,16 @@ async def getTemplate(id: str) -> TemplateBB:
             detail="Couldn't find template with id: " + id,
         )
 
-    # return just the buildingBlocks part of the template (rest is already known)
-    templateBlocks = TemplateBB(templateBB=templateJson["TemplateBuildingBlocks"])
-
     logging.info(f"Sending template with id {id} to client!")
     writeLogJson(
         "getTemplate",
         200,
         startTime,
     )
-    return templateBlocks
+    return TemplateBB(templateBB=templateJson["TemplateBuildingBlocks"])
 
 
+# gets a list of fitting terms for the given input, parent name and accession
 @router.get(
     "/getTerms",
     summary="Retrieve Terms for the given query and parent term",
@@ -474,10 +469,8 @@ async def getSheets(
     # construct path to the backend
     pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
 
-    # read out the list of swate sheets
-    sheets = getSwateSheets(pathName, getIsaType(path))
     writeLogJson("getSheets", 200, startTime)
-    return sheets
+    return getSwateSheets(pathName, getIsaType(path))
 
 
 @router.put(
@@ -485,14 +478,11 @@ async def getSheets(
     summary="Update or save changes to a template",
     status_code=status.HTTP_200_OK,
 )
-async def saveTemplate(
-    request: Request, content: templateContent, data: Annotated[str, Cookie()]
-):
+async def saveTemplate(request: Request, content: templateContent):
     startTime = time.time()
-    try:
-        token = getData(data)
-        target = token["target"]
 
+    # get the full template data
+    try:
         table = content.table
         name = content.name
         identifier = content.identifier
@@ -503,6 +493,7 @@ async def saveTemplate(
         tags = content.tags
 
         id = str(uuid.uuid4())
+
     # if there are either the name or the accession missing, return error 400
     except:
         logging.warning("Client request couldn't be processed, the content is missing!")
@@ -517,18 +508,27 @@ async def saveTemplate(
             detail="Couldn't retrieve content of table",
         )
 
+    # construct the path; the template gets stored as name-identifier.json
     pathName = f"{os.environ.get('BACKEND_SAVE')}templates/{username['firstName']}-{username['lastName']}-{identifier}.json"
 
+    # setup empty header and values lists
     tableHeader = []
     tableValues = []
 
+    # for every column in the table fill the header and values lists
     for i, entry in enumerate(table):
+
+        # if its the input or output column
         if entry["name"] == "Input" or entry["name"] == "Output":
             tableHeader.append(
                 {"headertype": entry["name"], "values": [entry["annotationValue"]]}
             )
             tableValues.append([[i, 0], {"celltype": "FreeText", "values": [""]}])
+
+        # if its a regular column
         else:
+
+            # a header column is structured as dict with headertype and a list named values, containing the 3 important values for that column
             tableHeader.append(
                 {
                     "headertype": entry["name"],
@@ -541,6 +541,8 @@ async def saveTemplate(
                     ],
                 }
             )
+
+            # if its a unit, the values are different and contain the term accession values for the unit
             if type(entry["unit"]) == dict:
                 tableValues.append(
                     [
@@ -558,6 +560,8 @@ async def saveTemplate(
                         },
                     ]
                 )
+
+            # if its a regular column without unit, the term accession values are empty
             else:
                 tableValues.append(
                     [
@@ -577,6 +581,7 @@ async def saveTemplate(
 
     tableFormatted = {"name": identifier, "header": tableHeader, "values": tableValues}
 
+    # construct the finished template just as it is stored inside of the swate alpha
     jsonFile = {
         "id": id,
         "table": tableFormatted,
@@ -590,8 +595,23 @@ async def saveTemplate(
         "last_updated": str(datetime.datetime.now()),
     }
 
-    with open(pathName, "w", encoding="utf-8") as f:
-        json.dump(jsonFile, f, ensure_ascii=False, indent=4)
+    # save the template as json on the backend
+    try:
+        with open(pathName, "w", encoding="utf-8") as f:
+            json.dump(jsonFile, f, ensure_ascii=False, indent=4)
+    except:
+        logging.error("An error occurred trying to save the template!")
+        writeLogJson(
+            "saveTemplate", 500, startTime, "Error trying to save the template!"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Couldn't save template!",
+        )
+
+    logging.info(
+        f"Saved Template with name {username['firstName']}-{username['lastName']}-{identifier}.json"
+    )
 
     writeLogJson("saveTemplate", 200, startTime)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

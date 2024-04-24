@@ -56,9 +56,7 @@ def readIsaFile(path: str, type: str):
             isaFile = pd.read_excel(path, 0, engine="openpyxl")
 
     # parse the dataframe into json and return it
-    parsed = loads(isaFile.to_json(orient="split"))
-
-    return parsed
+    return loads(isaFile.to_json(orient="split"))
 
 
 # replaces the old content of the file with the new content
@@ -199,23 +197,34 @@ def getSwateSheets(path: str, type: str):
     match type:
         case "study":
             sheetNames = excelFile.sheet_names
-
             # if the sheetName is not "Study" or "isa_study", then its a swate sheet
-            for x in sheetNames:
-                if x != "Study" and x != "isa_study":
-                    swateSheet = pd.read_excel(path, sheet_name=x, engine="openpyxl")
-                    sheets.append(loads(swateSheet.to_json(orient="split")))
-                    names.append(x)
+            sheets = [
+                loads(
+                    pd.read_excel(path, sheet_name=x, engine="openpyxl").to_json(
+                        orient="split"
+                    )
+                )
+                for x in sheetNames
+                if x != "Study" and x != "isa_study"
+            ]
+
+            names = [x for x in sheetNames if x != "Study" and x != "isa_study"]
 
         case "assay":
             sheetNames = excelFile.sheet_names
 
-            # if the sheetName is not "Assay" or "isa_assay", then its a swate sheet
-            for x in sheetNames:
-                if x != "Assay" and x != "isa_assay":
-                    swateSheet = pd.read_excel(path, sheet_name=x, engine="openpyxl")
-                    sheets.append(loads(swateSheet.to_json(orient="split")))
-                    names.append(x)
+            sheets = [
+                loads(
+                    pd.read_excel(path, sheet_name=x, engine="openpyxl").to_json(
+                        orient="split"
+                    )
+                )
+                for x in sheetNames
+                if x != "Assay" and x != "isa_assay"
+            ]
+
+            names = [x for x in sheetNames if x != "Assay" and x != "isa_assay"]
+
     return sheets, names
 
 
@@ -232,12 +241,10 @@ def createSheet(sheetContent: sheetContent, target: str):
 
     # loop column by column
     for i, entry in enumerate(tableHead):
-        columnData = []
-        # loop row by row
-        for cell in enumerate(tableData[i]):
-            columnData.append(cell[1])
+        columnData = [cell for cell in tableData[i]]
         head.append(str(entry["Type"]))
         content.append(columnData)
+
     df = pd.DataFrame({head[0]: content[0]})
     head.pop(0)
     content.pop(0)
@@ -257,10 +264,14 @@ def createSheet(sheetContent: sheetContent, target: str):
         df.to_excel(writer, sheet_name=name, index=False)
 
     wb = openpyxl.load_workbook(filename=pathName)
+
+    # creates a new table inside of the excel sheet
     tab = openpyxl.worksheet.table.Table(
         displayName="annotationTable" + name,
         ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
     )
+
+    # styles an excel table sometimes similar to swate
     style = openpyxl.worksheet.table.TableStyleInfo(
         name="TableStyleMedium11",
         showFirstColumn=False,
