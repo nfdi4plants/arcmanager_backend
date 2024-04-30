@@ -278,7 +278,9 @@ async def public_arcs(target: str, page=1) -> Projects:
 
     try:
         # if the requested gitlab is not available after 30s, return error 504
-        request = requests.get(f"{os.environ.get(target)}/api/v4/projects?page={page}", timeout=30)
+        request = requests.get(
+            f"{os.environ.get(target)}/api/v4/projects?page={page}", timeout=30
+        )
     except:
         writeLogJson(
             "public_arcs",
@@ -1627,7 +1629,9 @@ async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) 
         )
 
     writeLogJson("getStudies", 200, startTime)
-    return [x.name for x in studiesJson.Arc if x.type == "tree"]
+    return [
+        x["name"] for x in json.loads(studiesJson.body)["Arc"] if x["type"] == "tree"
+    ]
 
 
 # returns a list of all assay names
@@ -1653,7 +1657,9 @@ async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -
         )
 
     writeLogJson("getAssays", 200, startTime)
-    return [x.name for x in assaysJson.Arc if x.type == "tree"]
+    return [
+        x["name"] for x in json.loads(assaysJson.body)["Arc"] if x["type"] == "tree"
+    ]
 
 
 # writes all the assay data into the isa file of the selected study (adds a new column with the data)
@@ -1923,7 +1929,7 @@ async def deleteFolder(
 
     # async function filling the payload with all files recursively found in the folder
     async def prepareJson(folder: Arc):
-        for entry in folder.Arc:
+        for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
             # if its a file, add it to the list
             if entry.type == "blob":
                 payload.append({"action": "delete", "file_path": entry.path})

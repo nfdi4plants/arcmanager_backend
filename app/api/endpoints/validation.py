@@ -99,7 +99,12 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
         for entry in assays:
             assay = await arc_path(id, request, f"assays/{entry}", data)
             valid["Assays"].append(
-                {entry: checkContent(assay, ["dataset", "protocols", "isa.assay.xlsx"])}
+                {
+                    entry: checkContent(
+                        Arc(Arc=json.loads(assay.body)["Arc"]),
+                        ["dataset", "protocols", "isa.assay.xlsx"],
+                    )
+                }
             )
 
         # here we check the content of every study whether the folders "resources" and "protocols are present", as well if the study file is present
@@ -108,7 +113,8 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
             valid["Studies"].append(
                 {
                     entry: checkContent(
-                        study, ["resources", "protocols", "isa.study.xlsx"]
+                        Arc(Arc=json.loads(study.body)["Arc"]),
+                        ["resources", "protocols", "isa.study.xlsx"],
                     ),
                     "identifier": await validateStudy(
                         request, id, f"studies/{entry}", data
