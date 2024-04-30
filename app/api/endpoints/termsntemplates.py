@@ -508,8 +508,11 @@ async def saveTemplate(request: Request, content: templateContent):
             detail="Couldn't retrieve content of table",
         )
 
+    # replace empty space with underscores
+    identifier = identifier.replace(" ", "_")
+
     # construct the path; the template gets stored as name-identifier.json
-    pathName = f"{os.environ.get('BACKEND_SAVE')}templates/{username['firstName']}-{username['lastName']}-{identifier}.json"
+    pathName = f"{os.environ.get('BACKEND_SAVE')}templates/{str(username['firstName']).replace(' ', '_')}-{str(username['lastName']).replace(' ', '_')}-{identifier}.json"
 
     # setup empty header and values lists
     tableHeader = []

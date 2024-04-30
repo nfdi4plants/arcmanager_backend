@@ -140,7 +140,7 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
     status_code=status.HTTP_200_OK,
 )
 async def list_arcs(
-    request: Request, data: Annotated[str, Cookie()], owned=False
+    request: Request, data: Annotated[str, Cookie()], owned=False, page=1
 ) -> Projects:
     startTime = time.time()
     try:
@@ -161,55 +161,107 @@ async def list_arcs(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="You are not logged in",
         )
+
+    arcList = []
+
     if owned == "true":
+        # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
         arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?per_page=100&min_access_level=30",
+            f"{os.environ.get(target)}/api/v4/projects?min_access_level=30&page={page}",
             headers=header,
         )
+        # if there is an error retrieving the content
+        if not arcs.ok:
+            logging.warning(arcs.content)
+            try:
+                arcsJson = arcs.json()
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+            try:
+                message = arcsJson["message"]
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=message,
+                )
+            except:
+                error = arcsJson["error"]
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=error + ", " + arcsJson["error_description"],
+                )
+
+        try:
+            arcList = arcs.json()
+            pages = int(arcs.headers["X-Total-Pages"])
+            # if there is an error parsing the data to json, throw an exception
+        except:
+            writeLogJson(
+                "arc_list",
+                500,
+                startTime,
+                f"Error while parsing the list of ARCs!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error while parsing the list of ARCs!",
+            )
+
+    # same procedure, but for general available arcs, not just private ones (more likely to be more than 100)
     else:
         arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?per_page=1000",
+            f"{os.environ.get(target)}/api/v4/projects?page={page}",
             headers=header,
         )
-    try:
-        arcsJson = arcs.json()
-    except:
-        writeLogJson(
-            "arc_list",
-            500,
-            startTime,
-            f"Error while parsing the list of ARCs!",
-        )
-        raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error while parsing the list of ARCs!",
-        )
-
-    if not arcs.ok:
-        logging.warning(arcs.content)
-        try:
-            message = arcsJson["message"]
-            raise HTTPException(
-                status_code=arcs.status_code,
-                detail=message,
-            )
-        except:
+        if not arcs.ok:
+            logging.warning(arcs.content)
+            try:
+                arcsJson = arcs.json()
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
             error = arcsJson["error"]
             raise HTTPException(
                 status_code=arcs.status_code,
                 detail=error + ", " + arcsJson["error_description"],
             )
 
+        try:
+            arcList = arcs.json()
+            pages = int(arcs.headers["X-Total-Pages"])
+
+        except:
+            writeLogJson(
+                "arc_list",
+                500,
+                startTime,
+                f"Error while parsing the list of ARCs!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error while parsing the list of ARCs!",
+            )
+
     logging.info("Sent list of Arcs")
     writeLogJson("arc_list", 200, startTime)
-    return Projects(projects=arcsJson)
+    return JSONResponse(
+        jsonable_encoder(Projects(projects=arcList)),
+        headers={
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        },
+    )
 
 
 # get a list of all public arcs
 @router.get(
     "/public_arcs", summary="Lists all public ARCs", status_code=status.HTTP_200_OK
 )
-async def public_arcs(target: str) -> Projects:
+async def public_arcs(target: str, page=1) -> Projects:
     startTime = time.time()
     try:
         target = getTarget(target)
@@ -226,9 +278,7 @@ async def public_arcs(target: str) -> Projects:
 
     try:
         # if the requested gitlab is not available after 30s, return error 504
-        request = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?per_page=100", timeout=30
-        )
+        request = requests.get(f"{os.environ.get(target)}/api/v4/projects?page={page}", timeout=30)
     except:
         writeLogJson(
             "public_arcs",
@@ -242,6 +292,7 @@ async def public_arcs(target: str) -> Projects:
         )
     try:
         requestJson = request.json()
+        pages = int(request.headers["X-Total-Pages"])
     except:
         writeLogJson(
             "public_arcs",
@@ -268,8 +319,13 @@ async def public_arcs(target: str) -> Projects:
 
     logging.debug("Sent public list of ARCs")
     writeLogJson("public_arcs", 200, startTime)
-
-    return Projects(projects=requestJson)
+    return JSONResponse(
+        jsonable_encoder(Projects(projects=requestJson)),
+        headers={
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        },
+    )
 
 
 # get the frontpage tree structure of the arc
@@ -334,7 +390,7 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
     "/arc_path", summary="Subdirectory of the ARC", status_code=status.HTTP_200_OK
 )
 async def arc_path(
-    id: int, request: Request, path: str, data: Annotated[str, Cookie()]
+    id: int, request: Request, path: str, data: Annotated[str, Cookie()], page=1
 ) -> Arc:
     startTime = time.time()
     try:
@@ -356,11 +412,14 @@ async def arc_path(
             detail="You are not authorized to view this ARC",
         )
     arcPath = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&path={path}",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=50&path={path}&page={page}",
         headers=header,
     )
+
     try:
         pathJson = arcPath.json()
+        pages = int(arcPath.headers["X-Total-Pages"])
+
     except:
         pathJson = {
             "error": "Parsing Error",
@@ -383,7 +442,13 @@ async def arc_path(
 
     logging.info(f"Sent info of ARC {id} with path {path}")
     writeLogJson("arc_path", 200, startTime)
-    return Arc(Arc=pathJson)
+    return JSONResponse(
+        jsonable_encoder(Arc(Arc=pathJson)),
+        headers={
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        },
+    )
 
 
 # gets the specific file on the given path and either saves it on the backend storage (for isa files) or sends the content directly
@@ -777,7 +842,7 @@ async def createArc(
 
     logging.info(f"Created Arc with Id: {newArcJson['id']}")
 
-    # replace empty space with underscores (arccommander can't process spaces in strings)
+    # replace empty space with underscores
     investIdentifier = investIdentifier.replace(" ", "_")
 
     ## commit the folders and the investigation isa to the repo
