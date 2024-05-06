@@ -6,6 +6,7 @@ class isaContent(BaseModel):
     isaPath: str = Field(examples=["isa.investigation.xlsx"])
     isaRepo: int = Field(examples=[230])
     arcBranch: str = Field(examples=["main"])
+    multiple: bool = Field(default=False)
 
 
 class arcContent(BaseModel):
@@ -63,3 +64,14 @@ class userContent(BaseModel):
     username: str = Field(examples=["lu98be"])
     id: int = Field(examples=[230])
     role: int = Field(examples=[30])
+
+
+class templateContent(BaseModel):
+    table: list
+    name: str
+    identifier: str
+    description: str
+    organisation: str
+    version: str
+    username: dict
+    tags: list

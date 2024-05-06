@@ -24,7 +24,7 @@ class Project(BaseModel):
     path: str = Field(examples=["ArcName"])
     path_with_namespace: str = Field(examples=["nickname/ArcName"])
     created_at: str = Field(examples=["1970-01-01T12:34:56.109Z"])
-    default_branch: str = Field(examples=["main"])
+    default_branch: str = Field(examples=["main"], default="main")
     tag_list: List = Field(examples=[["ARC", "RNA"]])
     topics: List = Field(examples=[["ARC", "RNA"]])
     ssh_url_to_repo: str = Field(
@@ -44,8 +44,8 @@ class Project(BaseModel):
             "https://gitlab.nfdi4plants.de/uploads/~/system/project/avatar/230/avatarName.jpg"
         ]
     )
-    forks_count: int = Field(examples=[3])
-    star_count: int = Field(examples=[2])
+    forks_count: Optional[int] = Field(examples=[3])
+    star_count: Optional[int] = Field(examples=[2])
     last_activity_at: str = Field(examples=["2024-01-01T12:34:56.373Z"])
     namespace: Namespace
 

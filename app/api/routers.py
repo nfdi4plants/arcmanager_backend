@@ -1,13 +1,23 @@
 from fastapi import APIRouter
 
 
-from app.api.endpoints import projects, authentication, validation
+from app.api.endpoints import (
+    projects,
+    authentication,
+    termsntemplates,
+    user,
+    validation,
+)
 
 
 api_router = APIRouter(prefix="/arcmanager/api/v1")
 
 
 api_router.include_router(projects.router, prefix="/projects", tags=["Projects"])
+api_router.include_router(
+    termsntemplates.router, prefix="/tnt", tags=["Terms and Templates"]
+)
+api_router.include_router(user.router, prefix="/user", tags=["User"])
 api_router.include_router(
     authentication.router, prefix="/auth", tags=["Authentication"]
 )
