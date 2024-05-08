@@ -11,7 +11,7 @@ from fastapi import (
     Request,
     Header,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.encoders import jsonable_encoder
 
 # gitlab api commits need base64 encoded content
@@ -30,6 +30,9 @@ from starlette.status import (
 
 import logging
 import time
+
+from pdf2image import convert_from_bytes  # type: ignore
+from io import BytesIO
 
 # paths in get requests need to be parsed to uri encoded strings
 from urllib.parse import quote
@@ -414,7 +417,7 @@ async def arc_path(
             detail="You are not authorized to view this ARC",
         )
     arcPath = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=50&path={path}&page={page}",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&page={page}",
         headers=header,
     )
 
@@ -530,7 +533,7 @@ async def arc_file(
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
         # if file is too big, skip requesting it
-        if int(fileSize) > 10000000:
+        if int(fileSize) > 50000000:
             logging.warning("File too large! Size: " + fileSize)
             writeLogJson(
                 "arc_file",
@@ -540,7 +543,7 @@ async def arc_file(
             )
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File too large! (over 10 MB)",
+                detail="File too large! (over 50 MB)",
             )
         # get the file metadata
         arcFile = requests.get(
@@ -565,7 +568,10 @@ async def arc_file(
         if path.endswith((".txt", ".md", ".html", ".xml")):
             # sanitize content
             # decode the file
-            decoded = base64.b64decode(arcFileJson["content"]).decode("utf-8")
+
+            decoded = base64.b64decode(arcFileJson["content"]).decode(
+                "utf-8", "replace"
+            )
 
             # remove script and iframe tags
             decoded = decoded.replace("<script>", "---here was a script tag---")
@@ -584,6 +590,41 @@ async def arc_file(
         elif path.endswith(".xlsx"):
             decoded = base64.b64decode(arcFileJson["content"])
             return readExcelFile(decoded)
+        # if its a pdf, return a html file containing the pdf as images
+        elif path.endswith(".pdf"):
+            fileName = arcFileJson["file_name"]
+            html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                <title>{fileName}</title>
+                <style>
+                img {{
+                    display: block;
+                    margin-left: auto;
+                    margin-right: auto;
+                    margin-bottom: 1em;
+                    width: 100%;
+                    }}
+                </style>
+                </head>
+                <body>
+                """
+
+            decoded = base64.b64decode(arcFileJson["content"])
+
+            images = convert_from_bytes(
+                decoded,
+                poppler_path=os.environ.get("BACKEND_SAVE") + "poppler/bin",
+            )
+            for img in images:
+                buffered = BytesIO()
+                img.save(buffered, format="JPEG")
+                html += f"<img src='data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}' />"
+
+            html += "</body></html>"
+
+            return HTMLResponse(html)
         else:
             writeLogJson("arc_file", 200, startTime)
             return arcFileJson

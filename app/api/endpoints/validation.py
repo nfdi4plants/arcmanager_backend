@@ -112,16 +112,12 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
             valid["Studies"].append(
                 {
                     entry: checkContent(
-
                         Arc(Arc=json.loads(study.body)["Arc"]),
                         ["resources", "protocols", "isa.study.xlsx"],
                     ),
-                  
-                    # TODO: Fix validation at validateStudy and re-implement
-                    # "identifier": await validateStudy(
-                    #     request, id, f"studies/{entry}", data
-                    # ),
-
+                    "identifier": await validateStudy(
+                        request, id, f"studies/{entry}", data
+                    ),
                 }
             )
         # add the results of the investigation validation to the valid dict
