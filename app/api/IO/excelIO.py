@@ -179,7 +179,7 @@ def getIsaType(path: str):
     pathSplit = path.split("/")
 
     # take the top entry of the array
-    fileName = pathSplit.pop()
+    fileName = pathSplit.pop().lower()
 
     # check if the file is starting with "isa" and ending with "xlsx"
     if fileName[:3] == "isa" and fileName[-4:] == "xlsx":

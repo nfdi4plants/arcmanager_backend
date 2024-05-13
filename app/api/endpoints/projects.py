@@ -565,7 +565,7 @@ async def arc_file(
                 detail=f"Error while retrieving the content of the file!",
             )
 
-        if path.endswith((".txt", ".md", ".html", ".xml")):
+        if path.lower().endswith((".txt", ".md", ".html", ".xml")):
             # sanitize content
             # decode the file
 
@@ -587,11 +587,11 @@ async def arc_file(
             fileJson["content"] = encoded
             writeLogJson("arc_file", 200, startTime)
             return fileJson
-        elif path.endswith(".xlsx"):
+        elif path.lower().endswith(".xlsx"):
             decoded = base64.b64decode(arcFileJson["content"])
             return readExcelFile(decoded)
         # if its a pdf, return a html file containing the pdf as images
-        elif path.endswith(".pdf"):
+        elif path.lower().endswith(".pdf"):
             fileName = arcFileJson["file_name"]
             html = f"""
                 <!DOCTYPE html>
@@ -612,18 +612,26 @@ async def arc_file(
                 """
 
             decoded = base64.b64decode(arcFileJson["content"])
-
-            images = convert_from_bytes(
-                decoded,
-                poppler_path=os.environ.get("BACKEND_SAVE") + "poppler/bin",
-            )
+            try:
+                images = convert_from_bytes(
+                    decoded,
+                    # remove for linux
+                    poppler_path=os.environ.get("BACKEND_SAVE") + "poppler/bin",
+                )
+            except:
+                writeLogJson("arc_file", 500, startTime, "File is not a valid pdf or stored as LFS!")
+                raise HTTPException(
+                    status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="File is not a supported pdf file or stored as LFS!",
+                )
             for img in images:
                 buffered = BytesIO()
                 img.save(buffered, format="JPEG")
                 html += f"<img src='data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}' />"
 
             html += "</body></html>"
-
+            logging.info(f"Sent pdf {fileName} from ID: {id}")
+            writeLogJson("arc_file", 200, startTime)
             return HTMLResponse(html)
         else:
             writeLogJson("arc_file", 200, startTime)
