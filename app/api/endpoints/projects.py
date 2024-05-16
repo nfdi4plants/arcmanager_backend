@@ -282,7 +282,8 @@ async def public_arcs(target: str, page=1) -> Projects:
     try:
         # if the requested gitlab is not available after 30s, return error 504
         request = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?page={page}", timeout=30
+            f"{os.environ.get(target)}/api/v4/projects?page={page}",
+            timeout=30,
         )
     except:
         writeLogJson(
@@ -335,7 +336,9 @@ async def public_arcs(target: str, page=1) -> Projects:
 
 # get the frontpage tree structure of the arc
 @router.get("/arc_tree", summary="Overview of the ARC", status_code=status.HTTP_200_OK)
-async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) -> Arc:
+async def arc_tree(
+    id: int, data: Annotated[str, Cookie()], request: Request, branch="main"
+) -> Arc:
     startTime = time.time()
     try:
         token = getData(data)
@@ -357,7 +360,7 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
         )
 
     arc = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&ref={branch}",
         headers=header,
     )
     try:
@@ -395,7 +398,12 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
     "/arc_path", summary="Subdirectory of the ARC", status_code=status.HTTP_200_OK
 )
 async def arc_path(
-    id: int, request: Request, path: str, data: Annotated[str, Cookie()], page=1
+    id: int,
+    request: Request,
+    path: str,
+    data: Annotated[str, Cookie()],
+    page=1,
+    branch="main",
 ) -> Arc:
     startTime = time.time()
     try:
@@ -417,7 +425,7 @@ async def arc_path(
             detail="You are not authorized to view this ARC",
         )
     arcPath = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&page={page}",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&page={page}&ref={branch}",
         headers=header,
     )
 
@@ -619,7 +627,12 @@ async def arc_file(
                     poppler_path=os.environ.get("BACKEND_SAVE") + "poppler/bin",
                 )
             except:
-                writeLogJson("arc_file", 500, startTime, "File is not a valid pdf or stored as LFS!")
+                writeLogJson(
+                    "arc_file",
+                    500,
+                    startTime,
+                    "File is not a valid pdf or stored as LFS!",
+                )
                 raise HTTPException(
                     status_code=HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="File is not a supported pdf file or stored as LFS!",
@@ -1607,7 +1620,9 @@ async def uploadFile(
     summary="Get the commit history of the ARC",
     status_code=status.HTTP_200_OK,
 )
-async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
+async def getChanges(
+    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+) -> list:
     startTime = time.time()
     try:
         token = getData(data)
@@ -1627,7 +1642,7 @@ async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) 
         )
 
     commits = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100&ref_name={branch}",
         headers=header,
     )
 
@@ -1659,11 +1674,15 @@ async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) 
 @router.get(
     "/getStudies", summary="Get a list of current studies", include_in_schema=False
 )
-async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
+async def getStudies(
+    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+) -> list:
     startTime = time.time()
     try:
         # request arc studies
-        studiesJson = await arc_path(id=id, request=request, path="studies", data=data)
+        studiesJson = await arc_path(
+            id=id, request=request, path="studies", data=data, branch=branch
+        )
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1687,11 +1706,15 @@ async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) 
 @router.get(
     "/getAssays", summary="Get a list of current assays", include_in_schema=False
 )
-async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
+async def getAssays(
+    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+) -> list:
     startTime = time.time()
     try:
         # request arc assays
-        assaysJson = await arc_path(id=id, request=request, path="assays", data=data)
+        assaysJson = await arc_path(
+            id=id, request=request, path="assays", data=data, branch=branch
+        )
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -2168,3 +2191,110 @@ async def getMetrics(request: Request, pwd: str):
         "statusCodes": statusCodes,
         "errors": errors,
     }
+
+
+# returns the list of different branches
+@router.get(
+    "/getBranches",
+    summary="Get a list of different branches of the arc",
+)
+async def getBranches(
+    request: Request, id: int, data: Annotated[str, Cookie()]
+) -> list:
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "getBranches",
+            401,
+            startTime,
+            f"Client is not authorized to view ARC {id}",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized to view this ARC",
+        )
+    try:
+        # request branches
+        branches = requests.get(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/branches",
+            headers=header,
+        )
+        branchJson = branches.json()
+
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getBranches",
+            401,
+            startTime,
+            f"No authorized Cookie found!",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+    writeLogJson("getBranches", 200, startTime)
+    return [x["name"] for x in branchJson]
+
+
+@router.get("/createArcJson", summary="Creates a json containing all publicly available Arcs", include_in_schema=False)
+async def createArcJson():
+
+    fullProjects = []
+
+    async def getLicenseData(id: int, datahub: str):
+        request = requests.get(
+            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}?license=true",
+        )
+        branches = requests.get(
+            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/branches",
+        )
+        branches = [x["name"] for x in branches.json()]
+        try:
+            projectJson = request.json()
+            license = projectJson["license"]
+        except:
+            license = {}
+
+        return license
+
+    data: list[Projects] = []
+    for datahub in ["freiburg", "tübingen", "plantmicrobe"]:
+
+        projects = await public_arcs(datahub)
+        pages = int(projects.headers.get("total-pages"))
+        data = Projects(projects=json.loads(projects.body)["projects"]).projects
+
+        for i in range(2, pages + 1):
+            projects = await public_arcs(datahub, i)
+            data += Projects(projects=json.loads(projects.body)["projects"]).projects
+
+        for arc in data:
+            fullProjects.append(
+                {
+                    "datahub": datahub,
+                    "id": arc.id,
+                    "name": arc.name,
+                    "description": arc.description,
+                    "tags": arc.tag_list,
+                    "author": {
+                        "name": arc.namespace.name,
+                        "username": arc.namespace.full_path,
+                    },
+                    "created_at": arc.created_at,
+                    "last_activity": arc.last_activity_at,
+                    "license": await getLicenseData(arc.id, datahub),
+                }
+            )
+
+    with open("searchableArcs.json", "w", encoding="utf8") as f:
+        json.dump(fullProjects, f, ensure_ascii=False)
+    f.close()
+    return fullProjects

@@ -35,6 +35,7 @@ class sheetContent(BaseModel):
     path: str = Field(examples=["assays/assay1/isa.assay.xlsx"])
     id: int = Field(examples=[230])
     name: str = Field(examples=["Strain"])
+    branch: str = Field(examples=["main"])
 
 
 class syncAssayContent(BaseModel):

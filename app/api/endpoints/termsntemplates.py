@@ -406,6 +406,7 @@ async def saveSheet(
         path = content.path
         projectId = content.id
         name = content.name
+        branch = content.branch
 
     # if there are either the name or the accession missing, return error 400
     except:
@@ -434,7 +435,9 @@ async def saveSheet(
     createSheet(content, target)
 
     # send the edited file back to gitlab
-    response = await commitFile(request, projectId, path, data, pathName, message=name)
+    response = await commitFile(
+        request, projectId, path, data, pathName, message=name, branch=branch
+    )
     writeLogJson("saveSheet", 200, startTime)
     return str(response)
 
