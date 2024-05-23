@@ -14,6 +14,7 @@ from fastapi import (
 import json
 import os
 import requests
+import re
 
 import logging
 import time
@@ -108,16 +109,14 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
                 {
                     entry: checkContent(
                         study, ["resources", "protocols", "isa.study.xlsx"]
-                    )
-                    # TODO: Fix validation at validateStudy and re-implement
-                    # "identifier": await validateStudy(
-                    #     request, id, f"studies/{entry}", data
-                    # ),
+                    ),
+                    "identifier": await validateStudy(
+                        request, id, f"studies/{entry}", data
+                    ),
                 }
             )
         # add the results of the investigation validation to the valid dict
-        # TODO: Fix validation at validateInvest and re-implement
-        # valid["investigation"] = await validateInvestigation(request, id, data)
+        valid["investigation"] = await validateInvestigation(request, id, data)
 
     # save the response time and return the dict to the user
     writeLogJson("validateArc", 200, startTime)
@@ -132,7 +131,9 @@ async def validateInvestigation(
     startTime = time.time()
     ## here we start checking the fields of the investigation file
     # to check the content of the investigation file, we first need to retrieve it
-    # TODO: Does not find the file!
+    investigation: list = await arc_file(
+        id, "isa.investigation.xlsx", request, data
+    )
     try:
         investigation: list = await arc_file(
             id, "isa.investigation.xlsx", request, data
@@ -157,6 +158,11 @@ async def validateInvestigation(
         ),
         "public": valiDate(
             getField(investigation, "Investigation Public Release Date")[1]
+        ),
+        "affiliation": type(getField(investigation, "Investigation Person Affiliation")[1]) 
+        == str,
+        "email": validMail(
+            getField(investigation, "Investigation Person Email")[1]
         ),
     }
     writeLogJson("validateInvest", 200, startTime)
@@ -215,11 +221,18 @@ def getField(isaFile: list, fieldName: str) -> list:
     # if the field wasn't found, it doesn't exist. Therefore return None
     return [fieldName, None]
 
-
 # validates a date value
 def valiDate(date: str) -> bool:
     try:
         datetime.datetime.fromisoformat(date)
+    except:
+        return False
+    return True
+
+# validates an email address
+def validMail(email: str) -> bool:
+    try:
+        re.match(r"[^@]+@[^@]+\.[^@]+", email)
     except:
         return False
     return True
