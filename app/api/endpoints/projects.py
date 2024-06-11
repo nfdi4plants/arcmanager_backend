@@ -49,6 +49,7 @@ from app.api.IO.excelIO import (
 
 from app.models.gitlab.input import (
     arcContent,
+    datamapContent,
     folderContent,
     newIsa,
     isaContent,
@@ -537,6 +538,8 @@ async def arc_file(
 
         logging.info(f"Sent ISA file {path} from ID: {id}")
         writeLogJson("arc_file", 200, startTime)
+        if getIsaType(path) == "datamap":
+            return fileJson
         return fileJson["data"]
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
@@ -869,6 +872,10 @@ async def createArc(
         "initialize_with_readme": True,
         "visibility": "private",
     }
+
+    # add arc to group, if it is requested
+    if arcContent.groupId != None:
+        project["namespace_id"] = arcContent.groupId
 
     projectPost = requests.post(
         os.environ.get(target) + "/api/v4/projects",
@@ -2196,7 +2203,7 @@ async def getMetrics(request: Request, pwd: str):
 # returns the list of different branches
 @router.get(
     "/getBranches",
-    summary="Get a list of different branches of the arc",
+    summary="Get a list of different branches for the arc",
 )
 async def getBranches(
     request: Request, id: int, data: Annotated[str, Cookie()]
@@ -2244,9 +2251,13 @@ async def getBranches(
     return [x["name"] for x in branchJson]
 
 
-@router.get("/createArcJson", summary="Creates a json containing all publicly available Arcs", include_in_schema=False)
+@router.post(
+    "/createArcJson",
+    summary="Creates a json containing all publicly available Arcs",
+    include_in_schema=False,
+    status_code=status.HTTP_201_CREATED,
+)
 async def createArcJson():
-
     fullProjects = []
 
     async def getLicenseData(id: int, datahub: str):
@@ -2265,8 +2276,50 @@ async def createArcJson():
 
         return license
 
+    async def getIdentifier(id: int, datahub: str, branch: str) -> str:
+        target = getTarget(datahub)
+        # check if isa investigation is present
+        identifierHead = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/isa.investigation.xlsx?ref={branch}",
+        )
+
+        if identifierHead.ok:
+            # get the raw ISA file
+            fileRaw = requests.get(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/isa.investigation.xlsx/raw?ref={branch}"
+            ).content
+
+            # construct path to save on the backend
+            pathName = (
+                f"{os.environ.get('BACKEND_SAVE')}{datahub}-{id}/isa.investigation.xlsx"
+            )
+
+            # create directory for the file to save it, skip if it exists already
+            os.makedirs(os.path.dirname(pathName), exist_ok=True)
+            with open(pathName, "wb") as file:
+                file.write(fileRaw)
+
+            logging.debug("Downloading File to " + pathName)
+
+            # read out isa file and create json
+            fileJson = readIsaFile(pathName, "investigation")
+            for entry in fileJson["data"]:
+                if "Investigation Identifier" in entry:
+                    return entry[1]
+
+        return ""
+
+    def formatTimeString(time: str) -> str:
+        parts = time.split("T")
+
+        date = parts[0]
+
+        time = parts[1].split(".")[0]
+
+        return date + " " + time
+
     data: list[Projects] = []
-    for datahub in ["freiburg", "tübingen", "plantmicrobe"]:
+    for datahub in ["freiburg", "plantmicrobe", "tuebingen"]:
 
         projects = await public_arcs(datahub)
         pages = int(projects.headers.get("total-pages"))
@@ -2283,14 +2336,18 @@ async def createArcJson():
                     "id": arc.id,
                     "name": arc.name,
                     "description": arc.description,
-                    "tags": arc.tag_list,
+                    "topics": arc.topics,
                     "author": {
                         "name": arc.namespace.name,
                         "username": arc.namespace.full_path,
                     },
-                    "created_at": arc.created_at,
-                    "last_activity": arc.last_activity_at,
+                    "created_at": formatTimeString(arc.created_at),
+                    "last_activity": formatTimeString(arc.last_activity_at),
                     "license": await getLicenseData(arc.id, datahub),
+                    "identifier": await getIdentifier(
+                        arc.id, datahub, arc.default_branch
+                    ),
+                    "url": arc.http_url_to_repo,
                 }
             )
 
@@ -2298,3 +2355,158 @@ async def createArcJson():
         json.dump(fullProjects, f, ensure_ascii=False)
     f.close()
     return fullProjects
+
+
+@router.get(
+    "/getArcJson",
+    summary="Get the json containing information about all public arcs",
+)
+async def getArcJson():
+    data = []
+
+    try:
+        with open("searchableArcs.json", "r", encoding="utf8") as f:
+            data = json.load(f)
+        f.close()
+    except:
+        raise HTTPException(
+            status_code=500, detail="Error reading the Arcs Json. Try recreating it!"
+        )
+
+    return data
+
+
+# here we create a new isa.datamap for the study
+@router.post(
+    "/addDatamap",
+    summary="Creates a new datamap",
+    status_code=status.HTTP_201_CREATED,
+)
+async def addDatamap(
+    request: Request, datamapContent: datamapContent, data: Annotated[str, Cookie()]
+):
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {
+            "Authorization": "Bearer " + token["gitlab"],
+            "Content-Type": "application/json",
+        }
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client not authorized to create new datamap! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "addDatamap",
+            401,
+            startTime,
+            f"Client not authorized to create new datamap!",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to create new datamap",
+        )
+
+    # load the isa properties
+    try:
+        id = datamapContent.id
+        path = datamapContent.path
+        branch = datamapContent.branch
+    except:
+        logging.error(f"Missing Properties for datamap! Data: {datamapContent}")
+        writeLogJson(
+            "addDatamap",
+            400,
+            startTime,
+            f"Missing Properties for datamap! Data: {datamapContent}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Properties for the datamap!",
+        )
+
+    ## commit the folders and the investigation isa to the repo
+
+    datamap = [
+        {
+            "action": "create",
+            "file_path": f"{path}/isa.datamap.xlsx",
+            "content": base64.b64encode(
+                open(
+                    f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.datamap.xlsx",
+                    "rb",
+                ).read()
+            ).decode("utf-8"),
+            "encoding": "base64",
+        },
+    ]
+
+    # wrap the payload into json
+    payload = json.dumps(
+        {
+            "branch": branch,
+            "commit_message": f"Added new datamap",
+            "actions": datamap,
+        }
+    )
+    logging.debug("Sent commit request with payload " + str(payload))
+    # send the data to the repo
+    commitRequest = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+        headers=header,
+        data=payload,
+    )
+    if not commitRequest.ok:
+        logging.error(f"Couldn't commit datamap to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "addDatamap",
+            500,
+            startTime,
+            f"Couldn't commit datamap to ARC! ERROR: {commitRequest.content}",
+        )
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Couldn't commit datamap to repo! Error: {commitRequest.content}",
+        )
+
+    logging.info(f"Created datamap in study {path} for ARC {id}")
+
+    writeLogJson(
+        "addDatamap",
+        201,
+        startTime,
+    )
+    return commitRequest.content
+
+
+# returns a list of all groups the user is part of
+@router.get("/getGroups", summary="Get a list of the users groups")
+async def getGroups(request: Request, data: Annotated[str, Cookie()]) -> list:
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+        # request arc studies
+        groups = requests.get(
+            f"{os.environ.get(target)}/api/v4/groups",
+            headers=header,
+        )
+
+        groupsJson = groups.json()
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getStudies",
+            401,
+            startTime,
+            f"No authorized Cookie found!",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    writeLogJson("getStudies", 200, startTime)
+    return [{"name": x["name"], "id": x["id"]} for x in groupsJson]

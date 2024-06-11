@@ -249,7 +249,7 @@ async def getTermSuggestionsByParentTerm(
     try:
         # default is an request call containing the parentTerm values
         request = requests.post(
-            "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getAllTermsByParentTerm",
+            "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv2/getAllTermsByParentTerm",
             data=json.dumps(
                 [
                     {

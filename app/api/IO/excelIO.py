@@ -42,6 +42,10 @@ def readIsaFile(path: str, type: str):
 
             # the intended name stated in the arc specification
             sheetName2 = "isa_assay"
+
+        case "datamap":
+            return getSwateSheets(path, "datamap")
+
         case other:
             sheetName = sheetName2 = ""
 
@@ -83,6 +87,11 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
 
             # the intended name stated in the arc specification
             sheetName = "isa_assay"
+
+        case "datamap":
+            sheetName = "isa_datamap"
+
+            sheetName2 = "Datamap"
 
         case other:
             sheetName = sheetName2 = ""
@@ -225,6 +234,20 @@ def getSwateSheets(path: str, type: str):
 
             names = [x for x in sheetNames if x != "Assay" and x != "isa_assay"]
 
+        case "datamap":
+            sheetNames = excelFile.sheet_names
+
+            sheets = [
+                loads(
+                    pd.read_excel(path, sheet_name=x, engine="openpyxl").to_json(
+                        orient="split"
+                    )
+                )
+                for x in sheetNames
+            ]
+
+            names = [x for x in sheetNames]
+
     return sheets, names
 
 
@@ -265,11 +288,18 @@ def createSheet(sheetContent: sheetContent, target: str):
 
     wb = openpyxl.load_workbook(filename=pathName)
 
-    # creates a new table inside of the excel sheet
-    tab = openpyxl.worksheet.table.Table(
-        displayName="annotationTable" + name,
-        ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
-    )
+    if getIsaType(path) == "datamap":
+        # creates a new table inside of the excel sheet
+        tab = openpyxl.worksheet.table.Table(
+            displayName="datamapTable" + name,
+            ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+        )
+    else:
+        # creates a new table inside of the excel sheet
+        tab = openpyxl.worksheet.table.Table(
+            displayName="annotationTable" + name,
+            ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+        )
 
     # styles an excel table sometimes similar to swate
     style = openpyxl.worksheet.table.TableStyleInfo(

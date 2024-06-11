@@ -25,7 +25,7 @@ class Project(BaseModel):
     path_with_namespace: str = Field(examples=["nickname/ArcName"])
     created_at: str = Field(examples=["1970-01-01T12:34:56.109Z"])
     default_branch: str = Field(examples=["main"], default="main")
-    tag_list: List = Field(examples=[["ARC", "RNA"]])
+    tag_list: Optional[List] = Field(examples=[["ARC", "RNA"]])
     topics: List = Field(examples=[["ARC", "RNA"]])
     ssh_url_to_repo: str = Field(
         examples=["ssh://git@gitlab.nfdi4plants.de/nickname/ArcName.git"]
