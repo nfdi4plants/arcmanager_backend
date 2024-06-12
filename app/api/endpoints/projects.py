@@ -2318,6 +2318,76 @@ async def createArcJson():
 
         return date + " " + time
 
+    async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
+        assays = requests.get(
+            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/tree?path=assays&ref={branch}",
+        )
+        assayList = []
+        if assays.ok:
+            assayList = [x["name"] for x in assays.json() if x["type"] == "tree"]
+
+        studies = requests.get(
+            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/tree?path=studies&ref={branch}",
+        )
+        studyDict = {}
+        if studies.ok:
+            studyDict = {x["name"]: [] for x in studies.json() if x["type"] == "tree"}
+
+        async def getStudyAssays(
+            id: int, datahub: str, branch: str, study: str
+        ) -> list:
+            target = getTarget(datahub)
+
+            # check if study file is present
+            studiesHead = requests.head(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('studies/'+study+'/isa.study.xlsx', safe='')}?ref={branch}",
+            )
+            if studiesHead.ok:
+                # get the raw ISA file
+                fileRaw = requests.get(
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('studies/'+study+'/isa.study.xlsx', safe='')}/raw?ref={branch}"
+                ).content
+
+                # construct path to save on the backend
+                pathName = f"{os.environ.get('BACKEND_SAVE')}{datahub}-{id}/studies/{study}/isa.study.xlsx"
+
+                # create directory for the file to save it, skip if it exists already
+                os.makedirs(os.path.dirname(pathName), exist_ok=True)
+                with open(pathName, "wb") as file:
+                    file.write(fileRaw)
+
+                logging.debug("Downloading File to " + pathName)
+                # read out isa file and create json
+                fileJson = readIsaFile(pathName, "study")
+                for entry in fileJson["data"]:
+                    if "Study Assay File Name" in entry:
+                        entry.pop(0)
+                        print(entry)
+                        if entry[0] != None:
+                            if "/" in entry[0]:
+                                return [x.split("/")[-2] for x in entry if x != None]
+                            elif "\\" in entry[0]:
+                                return [x.split("\\")[-2] for x in entry if x != None]
+                        else:
+                            return []
+            else:
+                print(studiesHead.status_code)
+                print(
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('studies/'+study+'/isa.study.xlsx', safe='')}?ref={branch}"
+                )
+            return []
+
+        for study in studyDict.keys():
+            studyAssayList = await getStudyAssays(id, datahub, branch, study)
+            studyDict[study] = studyAssayList
+            for assay in studyAssayList:
+                if assay in assayList:
+                    assayList.remove(assay)
+
+        if len(assayList) > 0:
+            studyDict["other"] = assayList
+        return studyDict
+
     data: list[Projects] = []
     for datahub in ["freiburg", "plantmicrobe", "tuebingen"]:
 
@@ -2348,6 +2418,9 @@ async def createArcJson():
                         arc.id, datahub, arc.default_branch
                     ),
                     "url": arc.http_url_to_repo,
+                    "assay_study_relation": await getAssayStudyRel(
+                        arc.id, datahub, arc.default_branch
+                    ),
                 }
             )
 
