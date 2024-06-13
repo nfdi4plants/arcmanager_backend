@@ -1497,7 +1497,7 @@ async def uploadFile(
                 logging.debug("Uploading .gitattributes to repo...")
                 writeLogJson(
                     "uploadFile",
-                    200,
+                    201,
                     startTime,
                 )
                 try:
@@ -1523,7 +1523,7 @@ async def uploadFile(
                 logging.debug("Updating .gitattributes...")
                 writeLogJson(
                     "uploadFile",
-                    200,
+                    201,
                     startTime,
                 )
                 try:
@@ -2254,7 +2254,7 @@ async def getBranches(
 @router.post(
     "/createArcJson",
     summary="Creates a json containing all publicly available Arcs",
-    include_in_schema=False,
+    include_in_schema=True,
     status_code=status.HTTP_201_CREATED,
 )
 async def createArcJson():
@@ -2276,8 +2276,12 @@ async def createArcJson():
 
         return license
 
-    async def getIdentifier(id: int, datahub: str, branch: str) -> str:
+    async def getInvestData(id: int, datahub: str, branch: str):
+        # contains [identifier, [contacts], [publications]]
+        result = [[], []]
+
         target = getTarget(datahub)
+
         # check if isa investigation is present
         identifierHead = requests.head(
             f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/isa.investigation.xlsx?ref={branch}",
@@ -2303,11 +2307,44 @@ async def createArcJson():
 
             # read out isa file and create json
             fileJson = readIsaFile(pathName, "investigation")
-            for entry in fileJson["data"]:
+            for i, entry in enumerate(fileJson["data"]):
                 if "Investigation Identifier" in entry:
-                    return entry[1]
+                    result.insert(0, entry[1])
 
-        return ""
+                # retrieve the contacts
+                if "INVESTIGATION CONTACTS" in entry:
+                    fullData = fileJson["data"]
+                    contact = {}
+                    for x in range(1, len(entry)):
+                        if fullData[i + 1][x] != None and fullData[i + 1][x] != "":
+                            for y in range(11):
+                                contact[fullData[i + 1 + y][0]] = fullData[i + 1 + y][x]
+                            if len(result) == 3:
+                                result[1].append(contact)
+                            else:
+                                result[0].append(contact)
+                            contact = {}
+
+                # retrieve the publications
+                if "INVESTIGATION PUBLICATIONS" in entry:
+                    fullData = fileJson["data"]
+                    publication = {}
+                    for x in range(1, len(entry)):
+                        if fullData[i + 2][x] != None and fullData[i + 2][x] != "":
+                            for y in range(7):
+                                publication[fullData[i + 1 + y][0]] = fullData[
+                                    i + 1 + y
+                                ][x]
+                            if len(result) == 3:
+                                result[2].append(publication)
+                            else:
+                                result[1].append(publication)
+                            publication = {}
+
+        if len(result) == 2:
+            result.insert(0, "")
+
+        return result
 
     def formatTimeString(time: str) -> str:
         parts = time.split("T")
@@ -2362,7 +2399,6 @@ async def createArcJson():
                 for entry in fileJson["data"]:
                     if "Study Assay File Name" in entry:
                         entry.pop(0)
-                        print(entry)
                         if entry[0] != None:
                             if "/" in entry[0]:
                                 return [x.split("/")[-2] for x in entry if x != None]
@@ -2370,11 +2406,6 @@ async def createArcJson():
                                 return [x.split("\\")[-2] for x in entry if x != None]
                         else:
                             return []
-            else:
-                print(studiesHead.status_code)
-                print(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('studies/'+study+'/isa.study.xlsx', safe='')}?ref={branch}"
-                )
             return []
 
         for study in studyDict.keys():
@@ -2399,7 +2430,9 @@ async def createArcJson():
             projects = await public_arcs(datahub, i)
             data += Projects(projects=json.loads(projects.body)["projects"]).projects
 
-        for arc in data:
+        for i, arc in enumerate(data):
+            investData = await getInvestData(arc.id, datahub, arc.default_branch)
+
             fullProjects.append(
                 {
                     "datahub": datahub,
@@ -2414,13 +2447,13 @@ async def createArcJson():
                     "created_at": formatTimeString(arc.created_at),
                     "last_activity": formatTimeString(arc.last_activity_at),
                     "license": await getLicenseData(arc.id, datahub),
-                    "identifier": await getIdentifier(
-                        arc.id, datahub, arc.default_branch
-                    ),
+                    "identifier": investData[0],
                     "url": arc.http_url_to_repo,
                     "assay_study_relation": await getAssayStudyRel(
                         arc.id, datahub, arc.default_branch
                     ),
+                    "contacts": investData[1],
+                    "publications": investData[2],
                 }
             )
 
