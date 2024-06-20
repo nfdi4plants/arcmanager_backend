@@ -77,7 +77,7 @@ logging.basicConfig(
 
 # Match the given target repo with the address name in the env file (default is the gitlab dev server)
 def getTarget(target: str) -> str:
-    match target:
+    match target.lower():
         case "dev":
             return "GITLAB_ADDRESS"
         case "freiburg":
@@ -2251,237 +2251,6 @@ async def getBranches(
     return [x["name"] for x in branchJson]
 
 
-@router.post(
-    "/createArcJson",
-    summary="Creates a json containing all publicly available Arcs",
-    include_in_schema=True,
-    status_code=status.HTTP_201_CREATED,
-)
-async def createArcJson():
-    fullProjects = []
-
-    async def getLicenseData(id: int, datahub: str):
-        request = requests.get(
-            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}?license=true",
-        )
-        branches = requests.get(
-            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/branches",
-        )
-        branches = [x["name"] for x in branches.json()]
-        try:
-            projectJson = request.json()
-            license = projectJson["license"]
-        except:
-            license = {}
-
-        return license
-
-    async def getInvestData(id: int, datahub: str, branch: str):
-        # contains [identifier, [contacts], [publications]]
-        result = [[], []]
-
-        target = getTarget(datahub)
-
-        # check if isa investigation is present
-        identifierHead = requests.head(
-            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/isa.investigation.xlsx?ref={branch}",
-        )
-
-        if identifierHead.ok:
-            # get the raw ISA file
-            fileRaw = requests.get(
-                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/isa.investigation.xlsx/raw?ref={branch}"
-            ).content
-
-            # construct path to save on the backend
-            pathName = (
-                f"{os.environ.get('BACKEND_SAVE')}{datahub}-{id}/isa.investigation.xlsx"
-            )
-
-            # create directory for the file to save it, skip if it exists already
-            os.makedirs(os.path.dirname(pathName), exist_ok=True)
-            with open(pathName, "wb") as file:
-                file.write(fileRaw)
-
-            logging.debug("Downloading File to " + pathName)
-
-            # read out isa file and create json
-            fileJson = readIsaFile(pathName, "investigation")
-            for i, entry in enumerate(fileJson["data"]):
-                if "Investigation Identifier" in entry:
-                    result.insert(0, entry[1])
-
-                # retrieve the contacts
-                if "INVESTIGATION CONTACTS" in entry:
-                    fullData = fileJson["data"]
-                    contact = {}
-                    for x in range(1, len(entry)):
-                        if fullData[i + 1][x] != None and fullData[i + 1][x] != "":
-                            for y in range(11):
-                                contact[fullData[i + 1 + y][0]] = fullData[i + 1 + y][x]
-                            if len(result) == 3:
-                                result[1].append(contact)
-                            else:
-                                result[0].append(contact)
-                            contact = {}
-
-                # retrieve the publications
-                if "INVESTIGATION PUBLICATIONS" in entry:
-                    fullData = fileJson["data"]
-                    publication = {}
-                    for x in range(1, len(entry)):
-                        if fullData[i + 2][x] != None and fullData[i + 2][x] != "":
-                            for y in range(7):
-                                publication[fullData[i + 1 + y][0]] = fullData[
-                                    i + 1 + y
-                                ][x]
-                            if len(result) == 3:
-                                result[2].append(publication)
-                            else:
-                                result[1].append(publication)
-                            publication = {}
-
-        if len(result) == 2:
-            result.insert(0, "")
-
-        return result
-
-    def formatTimeString(time: str) -> str:
-        parts = time.split("T")
-
-        date = parts[0]
-
-        time = parts[1].split(".")[0]
-
-        return date + " " + time
-
-    async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
-        assays = requests.get(
-            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/tree?path=assays&ref={branch}",
-        )
-        assayList = []
-        if assays.ok:
-            assayList = [x["name"] for x in assays.json() if x["type"] == "tree"]
-
-        studies = requests.get(
-            f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/tree?path=studies&ref={branch}",
-        )
-        studyDict = {}
-        if studies.ok:
-            studyDict = {x["name"]: [] for x in studies.json() if x["type"] == "tree"}
-
-        async def getStudyAssays(
-            id: int, datahub: str, branch: str, study: str
-        ) -> list:
-            target = getTarget(datahub)
-
-            # check if study file is present
-            studiesHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('studies/'+study+'/isa.study.xlsx', safe='')}?ref={branch}",
-            )
-            if studiesHead.ok:
-                # get the raw ISA file
-                fileRaw = requests.get(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('studies/'+study+'/isa.study.xlsx', safe='')}/raw?ref={branch}"
-                ).content
-
-                # construct path to save on the backend
-                pathName = f"{os.environ.get('BACKEND_SAVE')}{datahub}-{id}/studies/{study}/isa.study.xlsx"
-
-                # create directory for the file to save it, skip if it exists already
-                os.makedirs(os.path.dirname(pathName), exist_ok=True)
-                with open(pathName, "wb") as file:
-                    file.write(fileRaw)
-
-                logging.debug("Downloading File to " + pathName)
-                # read out isa file and create json
-                fileJson = readIsaFile(pathName, "study")
-                for entry in fileJson["data"]:
-                    if "Study Assay File Name" in entry:
-                        entry.pop(0)
-                        if entry[0] != None:
-                            if "/" in entry[0]:
-                                return [x.split("/")[-2] for x in entry if x != None]
-                            elif "\\" in entry[0]:
-                                return [x.split("\\")[-2] for x in entry if x != None]
-                        else:
-                            return []
-            return []
-
-        for study in studyDict.keys():
-            studyAssayList = await getStudyAssays(id, datahub, branch, study)
-            studyDict[study] = studyAssayList
-            for assay in studyAssayList:
-                if assay in assayList:
-                    assayList.remove(assay)
-
-        if len(assayList) > 0:
-            studyDict["other"] = assayList
-        return studyDict
-
-    data: list[Projects] = []
-    for datahub in ["freiburg", "plantmicrobe", "tuebingen"]:
-
-        projects = await public_arcs(datahub)
-        pages = int(projects.headers.get("total-pages"))
-        data = Projects(projects=json.loads(projects.body)["projects"]).projects
-
-        for i in range(2, pages + 1):
-            projects = await public_arcs(datahub, i)
-            data += Projects(projects=json.loads(projects.body)["projects"]).projects
-
-        for i, arc in enumerate(data):
-            investData = await getInvestData(arc.id, datahub, arc.default_branch)
-
-            fullProjects.append(
-                {
-                    "datahub": datahub,
-                    "id": arc.id,
-                    "name": arc.name,
-                    "description": arc.description,
-                    "topics": arc.topics,
-                    "author": {
-                        "name": arc.namespace.name,
-                        "username": arc.namespace.full_path,
-                    },
-                    "created_at": formatTimeString(arc.created_at),
-                    "last_activity": formatTimeString(arc.last_activity_at),
-                    "license": await getLicenseData(arc.id, datahub),
-                    "identifier": investData[0],
-                    "url": arc.http_url_to_repo,
-                    "assay_study_relation": await getAssayStudyRel(
-                        arc.id, datahub, arc.default_branch
-                    ),
-                    "contacts": investData[1],
-                    "publications": investData[2],
-                }
-            )
-
-    with open("searchableArcs.json", "w", encoding="utf8") as f:
-        json.dump(fullProjects, f, ensure_ascii=False)
-    f.close()
-    return fullProjects
-
-
-@router.get(
-    "/getArcJson",
-    summary="Get the json containing information about all public arcs",
-)
-async def getArcJson():
-    data = []
-
-    try:
-        with open("searchableArcs.json", "r", encoding="utf8") as f:
-            data = json.load(f)
-        f.close()
-    except:
-        raise HTTPException(
-            status_code=500, detail="Error reading the Arcs Json. Try recreating it!"
-        )
-
-    return data
-
-
 # here we create a new isa.datamap for the study
 @router.post(
     "/addDatamap",
@@ -2586,33 +2355,109 @@ async def addDatamap(
     return commitRequest.content
 
 
-# returns a list of all groups the user is part of
-@router.get("/getGroups", summary="Get a list of the users groups")
-async def getGroups(request: Request, data: Annotated[str, Cookie()]) -> list:
+# here we create a new isa.datamap for the study
+@router.put(
+    "/renameFolder",
+    summary="Renames a folder",
+)
+async def renameIsa(
+    request: Request,
+    data: Annotated[str, Cookie()],
+    id: int,
+    oldPath: str,
+    newPath: str,
+    branch="main",
+):
     startTime = time.time()
     try:
         token = getData(data)
-        header = {"Authorization": "Bearer " + token["gitlab"]}
+        header = {
+            "Authorization": "Bearer " + token["gitlab"],
+            "Content-Type": "application/json",
+        }
         target = getTarget(token["target"])
-        # request arc studies
-        groups = requests.get(
-            f"{os.environ.get(target)}/api/v4/groups",
-            headers=header,
-        )
-
-        groupsJson = groups.json()
     except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        logging.warning(
+            f"Client is not authorized to rename the folder! Cookies: {request.cookies}"
+        )
         writeLogJson(
-            "getStudies",
+            "deleteFolder",
             401,
             startTime,
-            f"No authorized Cookie found!",
+            f"Client is not authorized to rename the folder!",
         )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized to rename this folder",
         )
 
-    writeLogJson("getStudies", 200, startTime)
-    return [{"name": x["name"], "id": x["id"]} for x in groupsJson]
+    oldName = ""
+    newName = ""
+
+    old = oldPath.split("/")
+    new = newPath.split("/")
+
+    for i, name in enumerate(old):
+        if name != new[i]:
+            oldName = name
+            newName = new[i]
+            break
+
+    # get the content of the folder
+    folder = await arc_path(id, request, oldPath, data)
+
+    # list of all files to be deleted
+    payload = []
+
+    # async function filling the payload with all files recursively found in the folder
+    async def prepareJson(folder: Arc):
+        for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
+            # if its a file, add it to the list
+            if entry.type == "blob":
+                payload.append(
+                    {
+                        "action": "move",
+                        "previous_path": entry.path,
+                        "file_path": entry.path.replace(oldName, newName, 1),
+                    }
+                )
+
+            # if its a folder, search the folder for any file
+            elif entry.type == "tree":
+                await prepareJson(await arc_path(id, request, entry.path, data))
+
+            # this should never be the case, so pass along anything here
+            else:
+                pass
+
+    # start searching and filling the payload
+    await prepareJson(folder)
+
+    # the final json containing all files to be deleted
+    requestData = {
+        "branch": branch,
+        "commit_message": f"Moving all content from {oldPath} to {newPath}",
+        "actions": payload,
+    }
+
+    moveRequest = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+        headers=header,
+        data=json.dumps(requestData),
+    )
+
+    if not moveRequest.ok:
+        logging.error(f"Couldn't rename folder {oldPath} ! ERROR: {moveRequest.content}")
+        writeLogJson(
+            "renameFolder",
+            400,
+            startTime,
+            f"Couldn't rename folder {oldName} ! ERROR: {moveRequest.content}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Couldn't rename folder on repo! Error: {moveRequest.content}",
+        )
+    logging.info(f"Renamed folder on path {oldPath} to {newPath}")
+    writeLogJson("renameFolder", 200, startTime)
+    return "Successfully renamed the folder!"

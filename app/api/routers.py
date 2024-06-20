@@ -7,6 +7,7 @@ from app.api.endpoints import (
     termsntemplates,
     user,
     validation,
+    arcsearch,
 )
 
 
@@ -22,3 +23,4 @@ api_router.include_router(
     authentication.router, prefix="/auth", tags=["Authentication"]
 )
 api_router.include_router(validation.router, prefix="/validate", tags=["Validation"])
+api_router.include_router(arcsearch.router, prefix="/search", tags=["Search"])

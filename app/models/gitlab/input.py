@@ -14,7 +14,7 @@ class arcContent(BaseModel):
     name: str = Field(examples=["New Arc"])
     description: str = Field(examples=["This is a description for the new Arc"])
     investIdentifier: str = Field(examples=["newArc123"])
-    groupId: Optional[int] = Field(examples=[407])
+    groupId: Optional[int] = Field(examples=[407], default=None)
 
 
 class newIsa(BaseModel):
