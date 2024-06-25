@@ -276,7 +276,13 @@ def createSheet(sheetContent: sheetContent, target: str):
     # loop column by column
     for i, entry in enumerate(tableHead):
         columnData = [cell for cell in tableData[i]]
-        head.append(str(entry["Type"]))
+        try:
+            if entry["Custom"]:
+                head.append(str(entry["Type"]) + "[C]")
+            else:
+                head.append(str(entry["Type"]))
+        except:
+            head.append(str(entry["Type"]))
         content.append(columnData)
 
     df = pd.DataFrame({head[0]: content[0]})

@@ -261,6 +261,123 @@ async def list_arcs(
     )
 
 
+# head request option for arc_list, so that you only receive the number of pages
+@router.head(
+    "/arc_list",
+    summary="Just sends the headers containing the pages count",
+    include_in_schema=False,
+)
+async def list_arcs_head(
+    request: Request, data: Annotated[str, Cookie()], owned=False
+) -> Projects:
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "arc_list_head",
+            401,
+            startTime,
+            f"Client connected with no valid cookies/Client is not logged in.",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not logged in",
+        )
+
+    if owned == "true":
+        # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
+        arcs = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects?min_access_level=30",
+            headers=header,
+        )
+        # if there is an error retrieving the content
+        if not arcs.ok:
+            try:
+                arcsJson = arcs.json()
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+            try:
+                message = arcsJson["message"]
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=message,
+                )
+            except:
+                error = arcsJson["error"]
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=error + ", " + arcsJson["error_description"],
+                )
+
+        try:
+            pages = int(arcs.headers["X-Total-Pages"])
+            # if there is an error parsing the data to json, throw an exception
+        except:
+            writeLogJson(
+                "arc_list",
+                500,
+                startTime,
+                f"Error while parsing the list of ARCs!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error while parsing the list of ARCs!",
+            )
+
+    # same procedure, but for general available arcs, not just private ones (more likely to be more than 100)
+    else:
+        arcs = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects",
+            headers=header,
+        )
+        if not arcs.ok:
+            try:
+                arcsJson = arcs.json()
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+            error = arcsJson["error"]
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=error + ", " + arcsJson["error_description"],
+            )
+
+        try:
+            pages = int(arcs.headers["X-Total-Pages"])
+
+        except:
+            writeLogJson(
+                "arc_list_head",
+                500,
+                startTime,
+                f"Error while parsing the list of ARCs!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error while parsing the list of ARCs!",
+            )
+
+    logging.info("Sent list of Arc list headers")
+    writeLogJson("arc_list_head", 200, startTime)
+    return Response(
+        headers={
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        },
+    )
+
+
 # get a list of all public arcs
 @router.get(
     "/public_arcs", summary="Lists all public ARCs", status_code=status.HTTP_200_OK
@@ -2360,7 +2477,7 @@ async def addDatamap(
     "/renameFolder",
     summary="Renames a folder",
 )
-async def renameIsa(
+async def renameFolder(
     request: Request,
     data: Annotated[str, Cookie()],
     id: int,
@@ -2447,7 +2564,9 @@ async def renameIsa(
     )
 
     if not moveRequest.ok:
-        logging.error(f"Couldn't rename folder {oldPath} ! ERROR: {moveRequest.content}")
+        logging.error(
+            f"Couldn't rename folder {oldPath} ! ERROR: {moveRequest.content}"
+        )
         writeLogJson(
             "renameFolder",
             400,
