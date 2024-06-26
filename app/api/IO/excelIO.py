@@ -21,6 +21,16 @@ def getRowIndex(name: str, worksheet: FsWorksheet):
     return -1
 
 
+# sanitize input
+def sanitizeInput(input: str | list) -> str:
+    if type(input) is list:
+        return [sanitizeInput(entry) for entry in input]
+
+    if type(input) is str:
+        return input.replace("<", "&lt;").replace(">", "&gt;")
+    return input
+
+
 # reads out the given file and sends the content as json back
 def readIsaFile(path: str, type: str):
     # initiate isaFile structure
@@ -124,7 +134,7 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
 
         for x in range(1, len(newContent)):
             if newContent[x] != None and newContent[x] != "":
-                sheetData.SetValueAt(newContent[x], rowIndex, x + 1)
+                sheetData.SetValueAt(sanitizeInput(newContent[x]), rowIndex, x + 1)
         try:
             importIsa.RemoveWorksheet(sheetName)
         except:
@@ -170,7 +180,8 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
                     isaFile[id : id + 1]
                     .at[id, columnName]
                     .replace(
-                        oldContent[isaFile[0:1].columns[x]].values[0], newContent[x]
+                        oldContent[isaFile[0:1].columns[x]].values[0],
+                        sanitizeInput(newContent[x]),
                     )
                 )
 
@@ -268,9 +279,9 @@ def createSheet(sheetContent: sheetContent, target: str):
     content = []
 
     tableHead = sheetContent.tableHead
-    tableData = sheetContent.tableContent
+    tableData = sanitizeInput(sheetContent.tableContent)
     path = sheetContent.path
-    name = sheetContent.name
+    name = sheetContent.name.replace(" ", "_")
     id = sheetContent.id
 
     # loop column by column
@@ -278,11 +289,11 @@ def createSheet(sheetContent: sheetContent, target: str):
         columnData = [cell for cell in tableData[i]]
         try:
             if entry["Custom"]:
-                head.append(str(entry["Type"]) + "[C]")
+                head.append(sanitizeInput(str(entry["Type"])) + "[C]")
             else:
-                head.append(str(entry["Type"]))
+                head.append(sanitizeInput(str(entry["Type"])))
         except:
-            head.append(str(entry["Type"]))
+            head.append(sanitizeInput(str(entry["Type"])))
         content.append(columnData)
 
     df = pd.DataFrame({head[0]: content[0]})

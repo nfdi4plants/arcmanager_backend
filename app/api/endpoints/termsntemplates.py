@@ -434,6 +434,8 @@ async def saveSheet(
     # add the new sheet to the file
     createSheet(content, target)
 
+    name = name.replace(" ", "_")
+
     # send the edited file back to gitlab
     response = await commitFile(
         request, projectId, path, data, pathName, message=name, branch=branch

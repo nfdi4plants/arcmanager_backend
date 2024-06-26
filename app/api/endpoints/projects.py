@@ -75,6 +75,16 @@ logging.basicConfig(
 )
 
 
+# sanitize input
+def sanitizeInput(input: str | list) -> str:
+    if type(input) is list:
+        return [sanitizeInput(entry) for entry in input]
+
+    if type(input) is str:
+        return input.replace("<", "&lt;").replace(">", "&gt;")
+    return input
+
+
 # Match the given target repo with the address name in the env file (default is the gitlab dev server)
 def getTarget(target: str) -> str:
     match target.lower():
@@ -191,11 +201,17 @@ async def list_arcs(
                     detail=message,
                 )
             except:
-                error = arcsJson["error"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=error + ", " + arcsJson["error_description"],
-                )
+                try:
+                    error = arcsJson["error"]
+                    raise HTTPException(
+                        status_code=arcs.status_code,
+                        detail=error + ", " + arcsJson["error_description"],
+                    )
+                except:
+                    raise HTTPException(
+                        status_code=arcs.status_code,
+                        detail=arcsJson,
+                    )
 
         try:
             arcList = arcs.json()
@@ -633,7 +649,7 @@ async def arc_file(
     fileSize = fileHead.headers["X-Gitlab-Size"]
 
     # if its a isa file, return the content of the file as json to the frontend
-    if getIsaType(path) != "":
+    if getIsaType(path) is not str:
         # get the raw ISA file
         fileRaw = requests.get(
             f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
@@ -778,6 +794,7 @@ async def saveFile(
 ):
     startTime = time.time()
     try:
+        isaContent.isaInput = sanitizeInput(isaContent.isaInput)
         token = getData(data)
         target = token["target"]
     except:
@@ -857,7 +874,7 @@ async def saveFile(
 async def commitFile(
     request: Request,
     id: int,
-    repoPath,
+    repoPath: str,
     data: Annotated[str, Cookie()],
     filePath="",
     branch="main",
@@ -890,7 +907,7 @@ async def commitFile(
     commitMessage = "Updated " + repoPath
 
     if message != "":
-        commitMessage += ", changed " + message
+        commitMessage += ", changed " + sanitizeInput(message)
 
     header = {
         "Authorization": "Bearer " + token["gitlab"],
@@ -972,9 +989,9 @@ async def createArc(
         )
     # read out the new arc properties
     try:
-        name = arcContent.name
-        description = arcContent.description
-        investIdentifier = arcContent.investIdentifier
+        name = sanitizeInput(arcContent.name)
+        description = sanitizeInput(arcContent.description)
+        investIdentifier = sanitizeInput(arcContent.investIdentifier)
     except:
         logging.error(f"Missing content for arc creation! Data: {arcContent}")
         raise HTTPException(
@@ -1193,9 +1210,9 @@ async def createIsa(
 
     # load the isa properties
     try:
-        identifier = isaContent.identifier
+        identifier = sanitizeInput(isaContent.identifier)
         id = isaContent.id
-        type = isaContent.type
+        type = sanitizeInput(isaContent.type)
         branch = isaContent.branch
     except:
         logging.error(f"Missing Properties for isa! Data: {isaContent}")
@@ -1395,8 +1412,8 @@ async def uploadFile(
     id: Annotated[int, Form()],
     branch: Annotated[str, Form()],
     path: Annotated[str, Form()],
-    namespace: Annotated[str, Form()],
-    lfs: Annotated[str, Form()],
+    namespace: Annotated[str, Form()] = "",
+    lfs: Annotated[str, Form()] = False,
     chunkNumber: Annotated[int, Form()] = 0,
     totalChunks: Annotated[int, Form()] = 1,
 ) -> Commit | dict | str:
@@ -1453,6 +1470,8 @@ async def uploadFile(
 
         # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
         if lfs == "true":
+            if namespace == "":
+                raise HTTPException(400, "No Namespace was included!")
             logging.debug("Uploading file with lfs...")
 
             # create a new tempfile to store the data
@@ -2365,7 +2384,10 @@ async def getBranches(
             detail="No authorized cookie found!",
         )
     writeLogJson("getBranches", 200, startTime)
-    return [x["name"] for x in branchJson]
+    try:
+        return [x["name"] for x in branchJson]
+    except:
+        return ["main"]
 
 
 # here we create a new isa.datamap for the study

@@ -37,14 +37,15 @@ class Project(BaseModel):
     readme_url: Optional[str] = Field(
         examples=[
             "https://gitlab.nfdi4plants.de/nickname/ArcName/~/blob/main/README.md"
-        ]
+        ],
+        default="",
     )
     avatar_url: Optional[str] = Field(
         examples=[
             "https://gitlab.nfdi4plants.de/uploads/~/system/project/avatar/230/avatarName.jpg"
         ]
     )
-    forks_count: Optional[int] = Field(examples=[3])
+    forks_count: Optional[int] = Field(examples=[3], default=0)
     star_count: Optional[int] = Field(examples=[2])
     last_activity_at: str = Field(examples=["2024-01-01T12:34:56.373Z"])
     namespace: Namespace

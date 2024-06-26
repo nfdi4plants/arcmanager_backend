@@ -14,6 +14,8 @@ router = APIRouter()
 import jwt
 import os
 
+from uuid import uuid4
+
 import time
 
 ## Read Oauth client info from .env for production
@@ -128,33 +130,43 @@ async def callback(request: Request, datahub: str):
         raise OAuthError(description="Failed retrieving the token data")
 
     userInfo = token.get("userinfo")["sub"]
+
+    xsrf = uuid4().hex
     # read out private key from .env
     pr_key = (
         b"-----BEGIN RSA PRIVATE KEY-----\n"
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
-    cookieData = {
-        "gitlab": access_token,
-        "target": datahub,
-    }
+    cookieData = {"gitlab": access_token, "target": datahub, "xsrf": xsrf}
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
     response.set_cookie(
         "data", encodedCookie, httponly=True, secure=True, samesite="strict"
     )
-    response.set_cookie("logged_in", "true", httponly=False)
     response.set_cookie(
-        "username",
-        await getUserName(datahub, userInfo, access_token),
-        httponly=False,
+        "XSRF-TOKEN", xsrf, httponly=False, secure=True, samesite="strict"
     )
+    response.set_cookie("logged_in", "true", httponly=False)
+
+    try:
+        username = await getUserName(datahub, userInfo, access_token)
+        response.set_cookie(
+            "username",
+            username.encode("latin-1", "ignore").decode(errors="ignore"),
+            httponly=False,
+        )
+    except:
+        response.set_cookie("username", "username", httponly=False)
     # delete any leftover error cookie
     response.delete_cookie("error")
 
     request.session.clear()
-    writeLogJson("callback", 307, startTime)
+    try:
+        writeLogJson("callback", 307, startTime)
+    except:
+        pass
     return response
 
 
@@ -166,5 +178,6 @@ async def logout(request: Request):
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
+    response.delete_cookie("XSRF-TOKEN")
     request.cookies.clear()
     return response
