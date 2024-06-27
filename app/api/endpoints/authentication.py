@@ -1,8 +1,9 @@
 import json
 from typing import Annotated
-from fastapi import APIRouter, Cookie, Request, Response, status
+from fastapi import APIRouter, Cookie, Request, Response
 from fastapi.responses import RedirectResponse
 from starlette.config import Config
+import urllib
 from app.api.endpoints.projects import getUserName
 
 # from starlette.requests import Request
@@ -13,8 +14,6 @@ router = APIRouter()
 
 import jwt
 import os
-
-from uuid import uuid4
 
 import time
 
@@ -131,22 +130,18 @@ async def callback(request: Request, datahub: str):
 
     userInfo = token.get("userinfo")["sub"]
 
-    xsrf = uuid4().hex
     # read out private key from .env
     pr_key = (
         b"-----BEGIN RSA PRIVATE KEY-----\n"
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
-    cookieData = {"gitlab": access_token, "target": datahub, "xsrf": xsrf}
+    cookieData = {"gitlab": access_token, "target": datahub}
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
     response.set_cookie(
         "data", encodedCookie, httponly=True, secure=True, samesite="strict"
-    )
-    response.set_cookie(
-        "XSRF-TOKEN", xsrf, httponly=False, secure=True, samesite="strict"
     )
     response.set_cookie("logged_in", "true", httponly=False)
 
@@ -154,11 +149,11 @@ async def callback(request: Request, datahub: str):
         username = await getUserName(datahub, userInfo, access_token)
         response.set_cookie(
             "username",
-            username.encode("latin-1", "ignore").decode(errors="ignore"),
+            urllib.parse.quote(username),
             httponly=False,
         )
     except:
-        response.set_cookie("username", "username", httponly=False)
+        response.set_cookie("username", "user", httponly=False)
     # delete any leftover error cookie
     response.delete_cookie("error")
 
@@ -178,6 +173,5 @@ async def logout(request: Request):
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
-    response.delete_cookie("XSRF-TOKEN")
     request.cookies.clear()
     return response

@@ -649,7 +649,7 @@ async def arc_file(
     fileSize = fileHead.headers["X-Gitlab-Size"]
 
     # if its a isa file, return the content of the file as json to the frontend
-    if getIsaType(path) is not str:
+    if getIsaType(path) != "":
         # get the raw ISA file
         fileRaw = requests.get(
             f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
@@ -1119,6 +1119,180 @@ async def createArc(
         data=payload,
     )
     if not commitRequest.ok:
+        # try repairing the arc
+        commitRequest = await repairArc(
+            request=request,
+            data=data,
+            arcContent=arcContent,
+            id=newArcJson["id"],
+            branch=newArcJson["default_branch"],
+        )
+    else:
+        logging.info(f"Created new ARC with ID: {newArcJson['id']}")
+
+        # write identifier into investigation file
+        await arc_file(
+            id=newArcJson["id"],
+            path="isa.investigation.xlsx",
+            request=request,
+            data=data,
+            branch=newArcJson["default_branch"],
+        )
+        # fill in the identifier, name and description of the arc into the investigation file
+        writeIsaFile(
+            path="isa.investigation.xlsx",
+            type="investigation",
+            newContent=["Investigation Identifier", investIdentifier],
+            repoId=newArcJson["id"],
+            location=token["target"],
+        )
+        writeIsaFile(
+            path="isa.investigation.xlsx",
+            type="investigation",
+            newContent=["Investigation Title", name],
+            repoId=newArcJson["id"],
+            location=token["target"],
+        )
+        writeIsaFile(
+            path="isa.investigation.xlsx",
+            type="investigation",
+            newContent=["Investigation Description", description],
+            repoId=newArcJson["id"],
+            location=token["target"],
+        )
+
+        await commitFile(
+            request=request,
+            id=newArcJson["id"],
+            repoPath="isa.investigation.xlsx",
+            data=data,
+            filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
+            branch=newArcJson["default_branch"],
+        )
+        writeLogJson("createArc", 201, startTime)
+    return [projectPost.content, commitRequest.content]
+
+
+@router.post(
+    "/repairArc",
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+    summary="Repairs an arc that was created with just a readme file",
+)
+async def repairArc(
+    request: Request,
+    data: Annotated[str, Cookie()],
+    arcContent: arcContent,
+    id: int,
+    branch="main",
+):
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {
+            "Authorization": "Bearer " + token["gitlab"],
+            "Content-Type": "application/json",
+        }
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client not logged in for ARC creation! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "createArc",
+            401,
+            startTime,
+            f"Client not logged in for ARC creation!",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Please login to create a new ARC",
+        )
+
+    # read out the new arc properties
+    try:
+        name = sanitizeInput(arcContent.name)
+        description = sanitizeInput(arcContent.description)
+        investIdentifier = sanitizeInput(arcContent.investIdentifier)
+    except:
+        logging.error(f"Missing content for arc creation! Data: {arcContent}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing content for arc creation!",
+        )
+
+    # replace empty space with underscores
+    investIdentifier = investIdentifier.replace(" ", "_")
+
+    ## commit the folders and the investigation isa to the repo
+
+    # fill the payload with all the files and folders
+    arcData = [
+        {
+            "action": "create",
+            "file_path": "isa.investigation.xlsx",
+            "content": base64.b64encode(
+                open(
+                    f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.investigation.xlsx",
+                    "rb",
+                ).read()
+            ).decode("utf-8"),
+            "encoding": "base64",
+        },
+        {
+            "action": "create",
+            "file_path": ".arc/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "assays/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "runs/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "studies/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "workflows/.gitkeep",
+            "content": None,
+        },
+    ]
+
+    # the arc.cwl
+    # currently disabled, as an cwl is no longer required
+    """
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "arc.cwl",
+            "content": None,
+        }
+    )
+    """
+    # wrap the payload into json
+    payload = json.dumps(
+        {
+            "branch": branch,
+            "commit_message": "Initial commit of the arc structure",
+            "actions": arcData,
+        }
+    )
+    logging.debug(f"Sent commit request to repo with payload {payload}")
+    # send the data to the repo
+    commitRequest = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+        headers=header,
+        data=payload,
+    )
+    if not commitRequest.ok:
         logging.error(
             f"Couldn't commit ARC structure to the Hub! ERROR: {commitRequest.content}"
         )
@@ -1132,49 +1306,49 @@ async def createArc(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Couldn't commit the arc to the repo! Error: {commitRequest.content}",
         )
-    logging.info(f"Created new ARC with ID: {newArcJson['id']}")
+    logging.info(f"Created new ARC with ID: {id}")
 
     # write identifier into investigation file
     await arc_file(
-        id=newArcJson["id"],
+        id=id,
         path="isa.investigation.xlsx",
         request=request,
         data=data,
-        branch=newArcJson["default_branch"],
+        branch=branch,
     )
     # fill in the identifier, name and description of the arc into the investigation file
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Identifier", investIdentifier],
-        repoId=newArcJson["id"],
+        repoId=id,
         location=token["target"],
     )
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Title", name],
-        repoId=newArcJson["id"],
+        repoId=id,
         location=token["target"],
     )
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Description", description],
-        repoId=newArcJson["id"],
+        repoId=id,
         location=token["target"],
     )
 
     await commitFile(
         request=request,
-        id=newArcJson["id"],
+        id=id,
         repoPath="isa.investigation.xlsx",
         data=data,
-        filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
-        branch=newArcJson["default_branch"],
+        filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/isa.investigation.xlsx",
+        branch=branch,
     )
-    writeLogJson("createArc", 201, startTime)
-    return [projectPost.content, commitRequest.content]
+
+    return commitRequest.content
 
 
 # here we create a assay or study structure and push it to the repo
