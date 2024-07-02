@@ -244,11 +244,18 @@ async def list_arcs(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
-            error = arcsJson["error"]
-            raise HTTPException(
-                status_code=arcs.status_code,
-                detail=error + ", " + arcsJson["error_description"],
-            )
+            try:
+                error = arcsJson["error"]
+
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=error + ", " + arcsJson["error_description"],
+                )
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
 
         try:
             arcList = arcs.json()
@@ -283,9 +290,7 @@ async def list_arcs(
     summary="Just sends the headers containing the pages count",
     include_in_schema=False,
 )
-async def list_arcs_head(
-    request: Request, data: Annotated[str, Cookie()], owned=False
-) -> Projects:
+async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned=False):
     startTime = time.time()
     try:
         token = getData(data)
@@ -328,11 +333,17 @@ async def list_arcs_head(
                     detail=message,
                 )
             except:
-                error = arcsJson["error"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=error + ", " + arcsJson["error_description"],
-                )
+                try:
+                    error = arcsJson["error"]
+                    raise HTTPException(
+                        status_code=arcs.status_code,
+                        detail=error + ", " + arcsJson["error_description"],
+                    )
+                except:
+                    raise HTTPException(
+                        status_code=arcs.status_code,
+                        detail="Error retrieving the ARCs! Please login again!",
+                    )
 
         try:
             pages = int(arcs.headers["X-Total-Pages"])
@@ -363,11 +374,17 @@ async def list_arcs_head(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
-            error = arcsJson["error"]
-            raise HTTPException(
-                status_code=arcs.status_code,
-                detail=error + ", " + arcsJson["error_description"],
-            )
+            try:
+                error = arcsJson["error"]
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=error + ", " + arcsJson["error_description"],
+                )
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
 
         try:
             pages = int(arcs.headers["X-Total-Pages"])
@@ -637,12 +654,12 @@ async def arc_file(
         logging.error(f"File not found! Path: {path}")
         writeLogJson(
             "arc_file",
-            404,
+            fileHead.status_code,
             startTime,
             f"File not found! Path: {path}",
         )
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=fileHead.status_code,
             detail=f"File not found! Error: {fileHead.status_code}, Try to log-in again!",
         )
 
@@ -1725,6 +1742,17 @@ async def uploadFile(
                     data=iter(lambda: tempFile.read(4096 * 4096), b""),
                 )
 
+                if res.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(res.content)
+                    )
+                    ## try again
+                    requests.put(
+                        urlUpload,
+                        headers=header_upload,
+                        data=iter(lambda: tempFile.read(4096 * 4096), b""),
+                    )
+
             # build and upload the new pointer file to the arc
             repoPath = quote(path, safe="")
 
@@ -1753,9 +1781,23 @@ async def uploadFile(
             )
             if fileHead.ok:
                 response = requests.put(postUrl, headers=headers, json=jsonData)
+                if response.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(response.content)
+                    )
+                    ## try again
+                    response = requests.put(postUrl, headers=headers, json=jsonData)
+
             else:
                 response = requests.post(postUrl, headers=headers, json=jsonData)
+                if response.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(response.content)
+                    )
+                    ## try again
+                    response = requests.post(postUrl, headers=headers, json=jsonData)
 
+            ## if it still fails, return an error
             if not response.ok:
                 try:
                     responseJson = response.json()
@@ -1790,6 +1832,13 @@ async def uploadFile(
 
             getResponse = requests.get(url, headers=headers)
 
+            if getResponse.status_code == 500:
+                logging.warning(
+                    "Gitlab error! Trying again! Error: " + str(getResponse.content)
+                )
+                ## try again if it fails due to an error from gitlab
+                getResponse = requests.get(url, headers=headers)
+
             postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
 
             # if .gitattributes doesn't exist, create a new one
@@ -1804,6 +1853,15 @@ async def uploadFile(
                 response = requests.post(
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
+                if response.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(response.content)
+                    )
+                    ## try again
+                    response = requests.post(
+                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    )
+
                 logging.debug("Uploading .gitattributes to repo...")
                 writeLogJson(
                     "uploadFile",
@@ -1830,6 +1888,15 @@ async def uploadFile(
                 response = requests.put(
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
+                if response.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(response.content)
+                    )
+                    ## try again
+                    response = requests.put(
+                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    )
+
                 logging.debug("Updating .gitattributes...")
                 writeLogJson(
                     "uploadFile",
@@ -1858,6 +1925,17 @@ async def uploadFile(
                 f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
                 headers=header,
             )
+
+            # if there is a server error from gitlab, try again
+            if fileHead.status_code == 500:
+                logging.warning(
+                    "Gitlab error! Trying again! Error: " + str(fileHead.content)
+                )
+                fileHead = requests.head(
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
+                    headers=header,
+                )
+
             # if file doesn't exist, upload file
             if not fileHead.ok:
                 # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
@@ -1875,6 +1953,17 @@ async def uploadFile(
                     data=json.dumps(payload),
                     headers=header,
                 )
+                if request.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(request.content)
+                    )
+                    # try again
+                    request = requests.post(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                        data=json.dumps(payload),
+                        headers=header,
+                    )
+
                 statusCode = status.HTTP_201_CREATED
 
             # if file already exists, update the file
@@ -1893,6 +1982,17 @@ async def uploadFile(
                     data=json.dumps(payload),
                     headers=header,
                 )
+                if request.status_code == 500:
+                    logging.warning(
+                        "Gitlab error! Trying again! Error: " + str(request.content)
+                    )
+                    # try again
+                    request = requests.put(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                        data=json.dumps(payload),
+                        headers=header,
+                    )
+
                 statusCode = status.HTTP_200_OK
 
             logging.debug("Uploading file to repo...")

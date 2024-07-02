@@ -63,7 +63,7 @@ async def getTemplates() -> Templates:
     except:
         templateJson = {}
 
-    # if swate is down, return error 500
+    # if swate is down, return error
     if not request.ok:
         logging.error(
             f"There was an error retrieving the swate templates! ERROR: {templateJson}"
@@ -75,7 +75,7 @@ async def getTemplates() -> Templates:
             f"There was an error retrieving the swate templates! ERROR: {templateJson}",
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=request.status_code,
             detail="Couldn't receive swate templates",
         )
 
