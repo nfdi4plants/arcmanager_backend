@@ -196,10 +196,6 @@ async def list_arcs(
                 )
             try:
                 message = arcsJson["message"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=message,
-                )
             except:
                 try:
                     error = arcsJson["error"]
@@ -210,8 +206,12 @@ async def list_arcs(
                 except:
                     raise HTTPException(
                         status_code=arcs.status_code,
-                        detail=arcsJson,
+                        detail=str(arcsJson),
                     )
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail="Error: " + message,
+            )
 
         try:
             arcList = arcs.json()
@@ -328,10 +328,7 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
                 )
             try:
                 message = arcsJson["message"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=message,
-                )
+
             except:
                 try:
                     error = arcsJson["error"]
@@ -344,7 +341,10 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
                         status_code=arcs.status_code,
                         detail="Error retrieving the ARCs! Please login again!",
                     )
-
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail="Message: "+message,
+            )
         try:
             pages = int(arcs.headers["X-Total-Pages"])
             # if there is an error parsing the data to json, throw an exception
@@ -1736,10 +1736,11 @@ async def uploadFile(
                 urlUpload = result["objects"][0]["actions"]["upload"]["href"]
                 header_upload.pop("Transfer-Encoding")
                 tempFile.seek(0, 0)
+                fileContent = tempFile.read()
                 res = requests.put(
                     urlUpload,
                     headers=header_upload,
-                    data=iter(lambda: tempFile.read(4096 * 4096), b""),
+                    data=fileContent,
                 )
 
                 if res.status_code == 500:
@@ -1747,11 +1748,33 @@ async def uploadFile(
                         "Gitlab error! Trying again! Error: " + str(res.content)
                     )
                     ## try again
-                    requests.put(
+                    retry = requests.put(
                         urlUpload,
                         headers=header_upload,
-                        data=iter(lambda: tempFile.read(4096 * 4096), b""),
+                        data=fileContent,
                     )
+
+                    if not retry.ok:
+                        try:
+                            responseJson = retry.json()
+                            responseJson["error"] != None
+                        except:
+                            responseJson = {
+                                "error": "Couldn't upload file",
+                                "error_description": "Couldn't upload file to the lfs storage!",
+                            }
+                        logging.error(f"Couldn't upload to ARC! ERROR: {retry.content}")
+                        writeLogJson(
+                            "uploadFile",
+                            400,
+                            startTime,
+                            f"Couldn't upload to ARC! ERROR: {retry.content}",
+                        )
+                        raise HTTPException(
+                            status_code=retry.status_code,
+                            detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
+                        )
+
 
             # build and upload the new pointer file to the arc
             repoPath = quote(path, safe="")
@@ -1769,7 +1792,7 @@ async def uploadFile(
             }
 
             jsonData = {
-                "branch": "main",
+                "branch": branch,
                 "content": pointerContent,
                 "commit_message": "create a new lfs pointer file",
             }

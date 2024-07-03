@@ -48,6 +48,11 @@ async def getTemplates() -> Templates:
     )
     try:
         templateJson = request.json()
+    except:
+        templateJson = {}
+
+    # first try the old way to list the templates
+    try:
         templateList = [json.loads(x) for x in templateJson]
 
         # include list of custom templates
@@ -58,6 +63,21 @@ async def getTemplates() -> Templates:
             with open(templatePath + "/" + entry, "r") as f:
                 data = json.load(f)
                 templateList.append(data)
+                f.close()
+    except:
+        pass
+
+    # if it fails try the new alternative way
+    try:
+        templateList2 = [x for x in json.loads(templateJson)]
+        # include list of custom templates
+        templatePath = os.environ.get("BACKEND_SAVE") + "templates"
+        listOfTemplates = os.listdir(templatePath)
+
+        for entry in listOfTemplates:
+            with open(templatePath + "/" + entry, "r") as f:
+                data = json.load(f)
+                templateList2.append(data)
                 f.close()
 
     except:
@@ -86,7 +106,10 @@ async def getTemplates() -> Templates:
         startTime,
     )
     # return the templates
-    return Templates(templates=templateList)
+    try:
+        return Templates(templates=templateList)
+    except:
+        return Templates(templates=templateList2)
 
 
 # gets a specific template by its id (from swate) UNUSED
@@ -143,8 +166,8 @@ async def getTemplate(id: str) -> TemplateBB:
 )
 async def getTerms(
     input: str,
-    parentName: str,
-    parentTermAccession: str,
+    parentName: str = "",
+    parentTermAccession="",
     advanced=False,
 ) -> Terms:
     startTime = time.time()
@@ -153,32 +176,20 @@ async def getTerms(
         # if there is an extended search requested, make an advanced search call
         if advanced == "true":
             request = requests.post(
-                "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermsForAdvancedSearch",
-                data=json.dumps(
-                    [
-                        {
-                            "Ontologies": None,
-                            "TermName": input,
-                            "TermDefinition": "",
-                            "KeepObsolete": False,
-                        }
-                    ]
-                ),
+                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerms",
+                data=json.dumps([{"limit": 50, "ontologies": [], "query": input}]),
                 timeout=10,
             )
             logging.debug(f"Getting an extended list of terms for the input '{input}'!")
         else:
             # default is an request call containing the parentTerm values
             request = requests.post(
-                "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermSuggestionsByParentTerm",
+                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTermsByParent",
                 data=json.dumps(
                     [
                         {
-                            "n": 20,
-                            "parent_term": {
-                                "Name": parentName,
-                                "TermAccession": parentTermAccession,
-                            },
+                            "limit": 50,
+                            "parentTAN": parentTermAccession,
                             "query": input,
                         }
                     ]
@@ -314,6 +325,7 @@ async def getTermSuggestionsByParentTerm(
     return output
 
 
+## UNUSED
 @router.get(
     "/getTermSuggestions",
     summary="Retrieve Term suggestions by given input",
