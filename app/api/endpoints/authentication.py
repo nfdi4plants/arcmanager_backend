@@ -48,21 +48,24 @@ oauth.register(
 
 
 def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
-    with open("log.json", "r") as log:
-        jsonLog = json.load(log)
+    try:
+        with open("log.json", "r") as log:
+            jsonLog = json.load(log)
 
-    jsonLog.append(
-        {
-            "endpoint": endpoint,
-            "status": status,
-            "error": error,
-            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
-            "response_time": time.time() - startTime,
-        }
-    )
+        jsonLog.append(
+            {
+                "endpoint": endpoint,
+                "status": status,
+                "error": error,
+                "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+                "response_time": time.time() - startTime,
+            }
+        )
 
-    with open("log.json", "w") as logWrite:
-        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+        with open("log.json", "w") as logWrite:
+            json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+    except:
+        print("Error while logging to json!")
 
 
 # redirect user to requested keycloak to enter login credentials
@@ -141,7 +144,11 @@ async def callback(request: Request, datahub: str):
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
     response.set_cookie(
-        "data", encodedCookie, httponly=True, secure=True, samesite="strict"
+        "data",
+        encodedCookie,
+        httponly=True,
+        secure=True,
+        samesite="strict",
     )
     response.set_cookie("logged_in", "true", httponly=False)
 

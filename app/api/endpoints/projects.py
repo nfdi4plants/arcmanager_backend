@@ -20,6 +20,8 @@ import base64
 import json
 import os
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 import jwt
 
 from starlette.status import (
@@ -343,7 +345,7 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
                     )
             raise HTTPException(
                 status_code=arcs.status_code,
-                detail="Message: "+message,
+                detail="Message: " + message,
             )
         try:
             pages = int(arcs.headers["X-Total-Pages"])
@@ -436,6 +438,8 @@ async def public_arcs(target: str, page=1) -> Projects:
             f"{os.environ.get(target)}/api/v4/projects?page={page}",
             timeout=30,
         )
+        if request.status_code == 502:
+            raise Exception()
     except:
         writeLogJson(
             "public_arcs",
@@ -447,6 +451,7 @@ async def public_arcs(target: str, page=1) -> Projects:
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="DataHUB currently not available!!",
         )
+
     try:
         requestJson = request.json()
         pages = int(request.headers["X-Total-Pages"])
@@ -1631,7 +1636,7 @@ async def uploadFile(
         )
 
     f = open(
-        os.environ.get("BACKEND_SAVE") + "cache/" + name + "." + str(chunkNumber),
+        f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunkNumber}",
         "wb",
     )
     f.write(file)
@@ -1643,7 +1648,7 @@ async def uploadFile(
     if chunkNumber + 1 == totalChunks:
         for chunk in range(totalChunks):
             f = open(
-                os.environ.get("BACKEND_SAVE") + "cache/" + name + "." + str(chunk),
+                f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
                 "rb",
             )
             fullData += f.read()
@@ -1652,12 +1657,30 @@ async def uploadFile(
         # clear the chunks
         try:
             for chunk in range(totalChunks):
-                os.remove(os.environ.get("BACKEND_SAVE") + "cache/" + f"{name}.{chunk}")
+                os.remove(f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}")
         except:
             pass
 
         # open up a new hash
         shasum = hashlib.new("sha256")
+
+        ##########################
+        ## START UPLOAD PROCESS ##
+        ##########################
+
+        retry = Retry(
+            total=6,
+            backoff_factor=4,
+            status_forcelist=[500, 400, 502, 429, 503, 504],
+            allowed_methods=["POST", "PUT", "HEAD"],
+        )
+
+        adapter = HTTPAdapter(max_retries=retry)
+
+        session = requests.Session()
+
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
 
         # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
         if lfs == "true":
@@ -1707,7 +1730,22 @@ async def uploadFile(
                 ]
             )
 
-            r = requests.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+            r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+
+            if r.status_code == 401:
+                logging.warning(
+                    f"Client cookie not authorized! Cookies: {request.cookies}"
+                )
+                writeLogJson(
+                    "uploadFile",
+                    401,
+                    startTime,
+                    f"Client not authorized to create new ISA!",
+                )
+                raise HTTPException(
+                    status_code=HTTP_401_UNAUTHORIZED,
+                    detail="Not authorized to upload a File! Log in again!",
+                )
 
             logging.debug("Posting download URL...")
             try:
@@ -1719,7 +1757,10 @@ async def uploadFile(
                     startTime,
                     f"Error while uploading the file to lfs storage!",
                 )
-                return "Error: There was an error uploading the file. Please re-authorize and try again!"
+                raise HTTPException(
+                    status_code=500,
+                    detail="Error: There was an error uploading the file. Please re-authorize and try again!",
+                )
 
             # test if there is a change in the file
             testFail = False
@@ -1737,32 +1778,21 @@ async def uploadFile(
                 header_upload.pop("Transfer-Encoding")
                 tempFile.seek(0, 0)
                 fileContent = tempFile.read()
-                res = requests.put(
+                res = session.put(
                     urlUpload,
                     headers=header_upload,
                     data=fileContent,
                 )
 
-                if res.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(res.content)
-                    )
-                    ## try again
-                    retry = requests.put(
-                        urlUpload,
-                        headers=header_upload,
-                        data=fileContent,
-                    )
-
-                    if not retry.ok:
-                        try:
-                            responseJson = retry.json()
-                            responseJson["error"] != None
-                        except:
-                            responseJson = {
-                                "error": "Couldn't upload file",
-                                "error_description": "Couldn't upload file to the lfs storage!",
-                            }
+                if not res.ok:
+                    try:
+                        responseJson = retry.json()
+                        responseJson["error"] != None
+                    except:
+                        responseJson = {
+                            "error": "Couldn't upload file",
+                            "error_description": "Couldn't upload file to the lfs storage!",
+                        }
                         logging.error(f"Couldn't upload to ARC! ERROR: {retry.content}")
                         writeLogJson(
                             "uploadFile",
@@ -1774,7 +1804,6 @@ async def uploadFile(
                             status_code=retry.status_code,
                             detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                         )
-
 
             # build and upload the new pointer file to the arc
             repoPath = quote(path, safe="")
@@ -1798,29 +1827,17 @@ async def uploadFile(
             }
 
             # check if file already exists
-            fileHead = requests.head(
+            fileHead = session.head(
                 f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
                 headers=header,
             )
             if fileHead.ok:
-                response = requests.put(postUrl, headers=headers, json=jsonData)
-                if response.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(response.content)
-                    )
-                    ## try again
-                    response = requests.put(postUrl, headers=headers, json=jsonData)
+                response = session.put(postUrl, headers=headers, json=jsonData)
 
             else:
-                response = requests.post(postUrl, headers=headers, json=jsonData)
-                if response.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(response.content)
-                    )
-                    ## try again
-                    response = requests.post(postUrl, headers=headers, json=jsonData)
+                response = session.post(postUrl, headers=headers, json=jsonData)
 
-            ## if it still fails, return an error
+            ## if it fails, return an error
             if not response.ok:
                 try:
                     responseJson = response.json()
@@ -1853,14 +1870,7 @@ async def uploadFile(
 
             newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
 
-            getResponse = requests.get(url, headers=headers)
-
-            if getResponse.status_code == 500:
-                logging.warning(
-                    "Gitlab error! Trying again! Error: " + str(getResponse.content)
-                )
-                ## try again if it fails due to an error from gitlab
-                getResponse = requests.get(url, headers=headers)
+            getResponse = session.get(url, headers=headers)
 
             postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
 
@@ -1873,16 +1883,29 @@ async def uploadFile(
                     "content": content,
                     "commit_message": "Create .gitattributes",
                 }
-                response = requests.post(
+                response = session.post(
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
-                if response.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(response.content)
+
+                if not response.ok:
+                    try:
+                        responseJson = response.json()
+                        responseJson["error"] != None
+                    except:
+                        responseJson = {
+                            "error": "Couldn't create .gitattributes",
+                            "error_description": "Couldn't create .gitattributes file in ARC!",
+                        }
+                    logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+                    writeLogJson(
+                        "uploadFile",
+                        response.status_code,
+                        startTime,
+                        f"Couldn't upload to ARC! ERROR: {response.content}",
                     )
-                    ## try again
-                    response = requests.post(
-                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                     )
 
                 logging.debug("Uploading .gitattributes to repo...")
@@ -1908,16 +1931,31 @@ async def uploadFile(
                     "commit_message": "Update .gitattributes",
                 }
 
-                response = requests.put(
+                response = session.put(
                     postUrl, headers=headers, data=json.dumps(attributeData)
                 )
-                if response.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(response.content)
+
+                if not response.ok:
+                    try:
+                        responseJson = response.json()
+                        responseJson["error"] != None
+                    except:
+                        responseJson = {
+                            "error": "Couldn't add to .gitattributes",
+                            "error_description": "Couldn't add file to .gitattributes!",
+                        }
+                    logging.error(
+                        f"Couldn't add to .gitattributes! ERROR: {response.content}"
                     )
-                    ## try again
-                    response = requests.put(
-                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    writeLogJson(
+                        "uploadFile",
+                        400,
+                        startTime,
+                        f"Couldn't add to .gitattributes! ERROR: {response.content}",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Couldn't add file to .gitattributes! Error: {responseJson['error']}, {responseJson['error_description']}",
                     )
 
                 logging.debug("Updating .gitattributes...")
@@ -1944,20 +1982,10 @@ async def uploadFile(
         # if its a regular upload without git-lfs
         else:
             # check if file already exists
-            fileHead = requests.head(
+            fileHead = session.head(
                 f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
                 headers=header,
             )
-
-            # if there is a server error from gitlab, try again
-            if fileHead.status_code == 500:
-                logging.warning(
-                    "Gitlab error! Trying again! Error: " + str(fileHead.content)
-                )
-                fileHead = requests.head(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-                    headers=header,
-                )
 
             # if file doesn't exist, upload file
             if not fileHead.ok:
@@ -1971,21 +1999,11 @@ async def uploadFile(
                 }
 
                 # create the file on the gitlab
-                request = requests.post(
+                request = session.post(
                     f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
                     data=json.dumps(payload),
                     headers=header,
                 )
-                if request.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(request.content)
-                    )
-                    # try again
-                    request = requests.post(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                        data=json.dumps(payload),
-                        headers=header,
-                    )
 
                 statusCode = status.HTTP_201_CREATED
 
@@ -2000,21 +2018,11 @@ async def uploadFile(
                 }
 
                 # update the file to the gitlab
-                request = requests.put(
+                request = session.put(
                     f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
                     data=json.dumps(payload),
                     headers=header,
                 )
-                if request.status_code == 500:
-                    logging.warning(
-                        "Gitlab error! Trying again! Error: " + str(request.content)
-                    )
-                    # try again
-                    request = requests.put(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                        data=json.dumps(payload),
-                        headers=header,
-                    )
 
                 statusCode = status.HTTP_200_OK
 
@@ -2026,7 +2034,7 @@ async def uploadFile(
                     requestJson = request.content
                 logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=request.status_code,
                     detail=f"Couldn't upload file to repo! Error: {requestJson}",
                 )
 

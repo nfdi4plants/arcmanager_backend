@@ -1,3 +1,4 @@
+import re
 from typing import Annotated
 from fastapi import (
     APIRouter,
@@ -83,13 +84,13 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
     valid = {"Assays": [], "Studies": []}
 
     # check if there are all the necessary folders and the investigation file present inside the ground arc structure
-    valid["ARC structure"] = checkContent(
+    valid["ARC_Structure"] = checkContent(
         arc,
         ["studies", "assays", "workflows", "runs", "isa.investigation.xlsx", ".arc"],
     )
 
     # if the ground structure is valid, then we proceed and check the assays and studies
-    if type(valid["ARC structure"]) == bool:
+    if type(valid["ARC_Structure"]) == bool:
         ## here we start checking the assays and studies
         # first we get a list of names for the assays and studies
         assays = await getAssays(request, id, data)
@@ -122,7 +123,7 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
             )
         # add the results of the investigation validation to the valid dict
         # TODO: Fix validation at validateInvest and re-implement
-        # valid["investigation"] = await validateInvestigation(request, id, data)
+        valid["Investigation"] = await validateInvestigation(request, id, data)
 
     # save the response time and return the dict to the user
     writeLogJson("validateArc", 200, startTime)
@@ -133,11 +134,10 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
 @router.get("/validateInvest", summary="Validates the Investigation file of the ARC")
 async def validateInvestigation(
     request: Request, id: int, data: Annotated[str, Cookie()]
-) -> dict[str, bool]:
+) -> dict[str, bool | list]:
     startTime = time.time()
     ## here we start checking the fields of the investigation file
     # to check the content of the investigation file, we first need to retrieve it
-    # TODO: Does not find the file!
     try:
         investigation: list = await arc_file(
             id, "isa.investigation.xlsx", request, data
@@ -148,8 +148,8 @@ async def validateInvestigation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No isa.investigation.xlsx found! ARC is not valid!",
         )
-    # a first structure to check the 5 basic investigation identifier
-    investSection: dict[str, bool] = {
+    # a first structure to check the basic investigation identifier
+    investSection: dict[str, bool | list] = {
         # here we check if the identifier field is filled out with a valid string
         "identifier": type(getField(investigation, "Investigation Identifier")[1])
         == str,
@@ -163,12 +163,13 @@ async def validateInvestigation(
         "public": valiDate(
             getField(investigation, "Investigation Public Release Date")[1]
         ),
+        "contacts": await validateContacts(request, id, data),
     }
     writeLogJson("validateInvest", 200, startTime)
     return investSection
 
 
-@router.get("/validateStudy", summary="Validates the Investigation file of the ARC")
+@router.get("/validateStudy", summary="Validates a study file of the ARC")
 async def validateStudy(
     request: Request, id: int, path: str, data: Annotated[str, Cookie()]
 ) -> dict[str, bool]:
@@ -195,6 +196,58 @@ async def validateStudy(
     }
     writeLogJson("validateStudy", 200, startTime)
     return studySection
+
+
+async def validateContacts(
+    request: Request, id: int, data: Annotated[str, Cookie()]
+) -> list:
+    try:
+        investigation: list = await arc_file(
+            id, "isa.investigation.xlsx", request, data
+        )
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No isa.investigation.xlsx found! ARC is not valid!",
+        )
+
+    contacts = []
+
+    counter = 1
+
+    lastName = getField(investigation, "Investigation Person Last Name")[counter]
+
+    while type(lastName) == str and lastName != "":
+        firstName = getField(investigation, "Investigation Person First Name")[counter]
+        email = getField(investigation, "Investigation Person Email")[counter]
+        affiliation = getField(investigation, "Investigation Person Affiliation")[
+            counter
+        ]
+
+        # check first name
+        if type(firstName) == str and firstName != "":
+            # check email
+            if type(email) == str and validMail(email):
+                # check affiliation
+                if type(affiliation) == str and affiliation != "":
+                    contacts.append(True)
+                else:
+                    contacts.append("Affiliation is missing!")
+            else:
+                contacts.append("Email missing or not valid!")
+        else:
+            contacts.append("First Name is missing!")
+
+        counter += 1
+        # if there is no next entry, break the loop
+        try:
+            lastName = getField(investigation, "Investigation Person Last Name")[
+                counter
+            ]
+        except:
+            break
+
+    return contacts
 
 
 # check whether the necessary folders and files are present
@@ -228,3 +281,11 @@ def valiDate(date: str) -> bool:
     except:
         return False
     return True
+
+
+# validates an email address
+def validMail(email: str) -> bool:
+    try:
+        return not re.match(r"[^@]+@[^@]+\.[^@]+", email) is None
+    except:
+        return False
