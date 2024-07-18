@@ -168,7 +168,7 @@ async def getTerms(
     input: str,
     parentName: str = "",
     parentTermAccession="",
-    advanced=False,
+    advanced=True,
 ) -> Terms:
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer

@@ -670,13 +670,36 @@ async def arc_file(
 
     fileSize = fileHead.headers["X-Gitlab-Size"]
 
+    retry = Retry(
+        total=5,
+        backoff_factor=4,
+        status_forcelist=[500, 400, 502, 429, 503, 504, 404],
+        allowed_methods=["POST", "PUT", "HEAD"],
+    )
+
+    adapter = HTTPAdapter(max_retries=retry)
+
+    session = requests.Session()
+
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
     # if its a isa file, return the content of the file as json to the frontend
     if getIsaType(path) != "":
-        # get the raw ISA file
-        fileRaw = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
-            headers=header,
-        ).content
+
+        try:
+            # get the raw ISA file
+            fileRaw = session.get(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
+                headers=header,
+            ).content
+        except Exception as e:
+            logging.error(e)
+            print(e)
+            raise HTTPException(
+            status_code=500,
+            detail=f"File not found! Error: {e}, Try to log-in again!",
+        )
 
         # construct path to save on the backend
         pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
@@ -711,11 +734,21 @@ async def arc_file(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="File too large! (over 50 MB)",
             )
-        # get the file metadata
-        arcFile = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-            headers=header,
+        
+        try:
+            # get the file metadata
+            arcFile = session.get(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
+            print(e)
+            raise HTTPException(
+            status_code=500,
+            detail=f"File not found! Error: {e}, Try to log-in again!",
         )
+        
         logging.info(f"Sent info of {path} from ID: {id}")
         try:
             arcFileJson = arcFile.json()
@@ -1021,6 +1054,20 @@ async def createArc(
             detail="Missing content for arc creation!",
         )
 
+    retry = Retry(
+        total=5,
+        backoff_factor=4,
+        status_forcelist=[500, 400, 502, 429, 503, 504],
+        allowed_methods=["POST", "PUT", "HEAD"],
+    )
+
+    adapter = HTTPAdapter(max_retries=retry)
+
+    session = requests.Session()
+
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
     # here we create the project with the readme file
     project = {
         "name": name,
@@ -1033,11 +1080,20 @@ async def createArc(
     if arcContent.groupId != None:
         project["namespace_id"] = arcContent.groupId
 
-    projectPost = requests.post(
-        os.environ.get(target) + "/api/v4/projects",
-        headers=header,
-        data=json.dumps(project),
-    )
+    try:
+        projectPost = session.post(
+            os.environ.get(target) + "/api/v4/projects",
+            headers=header,
+            data=json.dumps(project),
+        )
+    except Exception as e:
+        logging.error(e)
+        print(e)
+        raise HTTPException(
+            status_code=request.status_code,
+            detail=f"Couldn't upload file to repo! Error: {e}",
+        )
+
     if not projectPost.ok:
         logging.error(f"Couldn't create new ARC! ERROR: {projectPost.content}")
         writeLogJson(
@@ -1134,20 +1190,37 @@ async def createArc(
         }
     )
     logging.debug(f"Sent commit request to repo with payload {payload}")
-    # send the data to the repo
-    commitRequest = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{newArcJson['id']}/repository/commits",
-        headers=header,
-        data=payload,
-    )
+    try:
+        # send the data to the repo
+        commitRequest = session.post(
+            f"{os.environ.get(target)}/api/v4/projects/{newArcJson['id']}/repository/commits",
+            headers=header,
+            data=payload,
+        )
+    except:
+        logging.error(f"Couldn't upload content to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Couldn't upload content to ARC! ERROR: {commitRequest.content}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Couldn't upload content to new ARC! Error: {commitRequest.content}",
+        )
+
     if not commitRequest.ok:
-        # try repairing the arc
-        commitRequest = await repairArc(
-            request=request,
-            data=data,
-            arcContent=arcContent,
-            id=newArcJson["id"],
-            branch=newArcJson["default_branch"],
+        logging.error(f"Couldn't upload content to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Couldn't upload content to ARC! ERROR: {commitRequest.content}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Couldn't upload content to new ARC! Error: {commitRequest.content}",
         )
     else:
         logging.info(f"Created new ARC with ID: {newArcJson['id']}")
@@ -1729,8 +1802,15 @@ async def uploadFile(
                     f"{namespace}.git/info/lfs/objects/batch",
                 ]
             )
-
-            r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+            try:
+                r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+            except Exception as e:
+                logging.error(e)
+                print(e)
+                raise HTTPException(
+                    status_code=request.status_code,
+                    detail=f"Couldn't upload file to repo! Error: {e}",
+                )
 
             if r.status_code == 401:
                 logging.warning(
@@ -1778,11 +1858,20 @@ async def uploadFile(
                 header_upload.pop("Transfer-Encoding")
                 tempFile.seek(0, 0)
                 fileContent = tempFile.read()
-                res = session.put(
-                    urlUpload,
-                    headers=header_upload,
-                    data=fileContent,
-                )
+
+                try:
+                    res = session.put(
+                        urlUpload,
+                        headers=header_upload,
+                        data=fileContent,
+                    )
+                except Exception as e:
+                    logging.error(e)
+                    print(e)
+                    raise HTTPException(
+                        status_code=request.status_code,
+                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    )
 
                 if not res.ok:
                     try:
@@ -1826,16 +1915,25 @@ async def uploadFile(
                 "commit_message": "create a new lfs pointer file",
             }
 
-            # check if file already exists
-            fileHead = session.head(
-                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
-                headers=header,
-            )
-            if fileHead.ok:
-                response = session.put(postUrl, headers=headers, json=jsonData)
+            try:
+                # check if file already exists
+                fileHead = session.head(
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
+                    headers=header,
+                )
+                if fileHead.ok:
+                    response = session.put(postUrl, headers=headers, json=jsonData)
 
-            else:
-                response = session.post(postUrl, headers=headers, json=jsonData)
+                else:
+                    response = session.post(postUrl, headers=headers, json=jsonData)
+
+            except Exception as e:
+                logging.error(e)
+                print(e)
+                raise HTTPException(
+                    status_code=request.status_code,
+                    detail=f"Couldn't upload file to repo! Error: {e}",
+                )
 
             ## if it fails, return an error
             if not response.ok:
@@ -1870,7 +1968,15 @@ async def uploadFile(
 
             newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
 
-            getResponse = session.get(url, headers=headers)
+            try:
+                getResponse = session.get(url, headers=headers)
+            except Exception as e:
+                logging.error(e)
+                print(e)
+                raise HTTPException(
+                    status_code=request.status_code,
+                    detail=f"Couldn't upload file to repo! Error: {e}",
+                )
 
             postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
 
@@ -1883,9 +1989,18 @@ async def uploadFile(
                     "content": content,
                     "commit_message": "Create .gitattributes",
                 }
-                response = session.post(
-                    postUrl, headers=headers, data=json.dumps(attributeData)
-                )
+
+                try:
+                    response = session.post(
+                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    )
+                except Exception as e:
+                    logging.error(e)
+                    print(e)
+                    raise HTTPException(
+                        status_code=request.status_code,
+                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    )
 
                 if not response.ok:
                     try:
@@ -1931,9 +2046,17 @@ async def uploadFile(
                     "commit_message": "Update .gitattributes",
                 }
 
-                response = session.put(
-                    postUrl, headers=headers, data=json.dumps(attributeData)
-                )
+                try:
+                    response = session.put(
+                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    )
+                except Exception as e:
+                    logging.error(e)
+                    print(e)
+                    raise HTTPException(
+                        status_code=request.status_code,
+                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    )
 
                 if not response.ok:
                     try:
@@ -1981,11 +2104,19 @@ async def uploadFile(
 
         # if its a regular upload without git-lfs
         else:
-            # check if file already exists
-            fileHead = session.head(
-                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-                headers=header,
-            )
+            try:
+                # check if file already exists
+                fileHead = session.head(
+                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
+                    headers=header,
+                )
+            except Exception as e:
+                logging.error(e)
+                print(e)
+                raise HTTPException(
+                    status_code=request.status_code,
+                    detail=f"Couldn't upload file to repo! Error: {e}",
+                )
 
             # if file doesn't exist, upload file
             if not fileHead.ok:
@@ -1997,13 +2128,20 @@ async def uploadFile(
                     "commit_message": f"Upload of new File {name}",
                     "encoding": "base64",
                 }
-
-                # create the file on the gitlab
-                request = session.post(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                    data=json.dumps(payload),
-                    headers=header,
-                )
+                try:
+                    # create the file on the gitlab
+                    request = session.post(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                        data=json.dumps(payload),
+                        headers=header,
+                    )
+                except Exception as e:
+                    logging.error(e)
+                    print(e)
+                    raise HTTPException(
+                        status_code=request.status_code,
+                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    )
 
                 statusCode = status.HTTP_201_CREATED
 
@@ -2017,12 +2155,20 @@ async def uploadFile(
                     "encoding": "base64",
                 }
 
-                # update the file to the gitlab
-                request = session.put(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                    data=json.dumps(payload),
-                    headers=header,
-                )
+                try:
+                    # update the file to the gitlab
+                    request = session.put(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                        data=json.dumps(payload),
+                        headers=header,
+                    )
+                except Exception as e:
+                    logging.error(e)
+                    print(e)
+                    raise HTTPException(
+                        status_code=request.status_code,
+                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    )
 
                 statusCode = status.HTTP_200_OK
 
