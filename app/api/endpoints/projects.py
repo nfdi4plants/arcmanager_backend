@@ -76,6 +76,20 @@ logging.basicConfig(
     level=logging.DEBUG,
 )
 
+# request sessions to retry the important requests
+retry = Retry(
+    total=5,
+    backoff_factor=4,
+    status_forcelist=[500, 400, 502, 429, 503, 504],
+    allowed_methods=["POST", "PUT", "HEAD"],
+)
+
+adapter = HTTPAdapter(max_retries=retry)
+
+session = requests.Session()
+session.mount("https://", adapter)
+session.mount("http://", adapter)
+
 
 # sanitize input
 def sanitizeInput(input: str | list) -> str:
@@ -137,7 +151,7 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
             {
                 "endpoint": endpoint,
                 "status": status,
-                "error": error,
+                "error": str(error),
                 "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
                 "response_time": time.time() - startTime,
             }
@@ -182,10 +196,18 @@ async def list_arcs(
 
     if owned == "true":
         # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
-        arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?min_access_level=30&page={page}",
-            headers=header,
-        )
+        try:
+            arcs = session.get(
+                f"{os.environ.get(target)}/api/v4/projects?min_access_level=30&page={page}",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("arc_list", 504, startTime, e)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Couldn't retrieve list of ARCs! Error: {e}",
+            )
         # if there is an error retrieving the content
         if not arcs.ok:
             logging.warning(arcs.content)
@@ -233,10 +255,18 @@ async def list_arcs(
 
     # same procedure, but for general available arcs, not just private ones (more likely to be more than 100)
     else:
-        arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?page={page}",
-            headers=header,
-        )
+        try:
+            arcs = session.get(
+                f"{os.environ.get(target)}/api/v4/projects?page={page}",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("arc_list", 504, startTime, e)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Couldn't retrieve list of ARCs! Error: {e}",
+            )
         if not arcs.ok:
             logging.warning(arcs.content)
             try:
@@ -580,10 +610,19 @@ async def arc_path(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="You are not authorized to view this ARC",
         )
-    arcPath = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&page={page}&ref={branch}",
-        headers=header,
-    )
+
+    try:
+        arcPath = session.get(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&page={page}&ref={branch}",
+            headers=header,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("arc_path", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't retrieve content of the path! Error: {e}",
+        )
 
     try:
         pathJson = arcPath.json()
@@ -670,36 +709,36 @@ async def arc_file(
 
     fileSize = fileHead.headers["X-Gitlab-Size"]
 
-    retry = Retry(
+    altRetry = Retry(
         total=5,
         backoff_factor=4,
         status_forcelist=[500, 400, 502, 429, 503, 504, 404],
         allowed_methods=["POST", "PUT", "HEAD"],
     )
 
-    adapter = HTTPAdapter(max_retries=retry)
+    altAdapter = HTTPAdapter(max_retries=altRetry)
 
-    session = requests.Session()
+    altSession = requests.Session()
 
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
+    altSession.mount("https://", altAdapter)
+    altSession.mount("http://", altAdapter)
 
     # if its a isa file, return the content of the file as json to the frontend
     if getIsaType(path) != "":
 
         try:
             # get the raw ISA file
-            fileRaw = session.get(
+            fileRaw = altSession.get(
                 f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
                 headers=header,
             ).content
         except Exception as e:
             logging.error(e)
-            print(e)
+            writeLogJson("arc_file", 504, startTime, e)
             raise HTTPException(
-            status_code=500,
-            detail=f"File not found! Error: {e}, Try to log-in again!",
-        )
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"File not found! Error: {e}, Try to log-in again!",
+            )
 
         # construct path to save on the backend
         pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
@@ -734,21 +773,21 @@ async def arc_file(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="File too large! (over 50 MB)",
             )
-        
+
         try:
             # get the file metadata
-            arcFile = session.get(
+            arcFile = altSession.get(
                 f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
                 headers=header,
             )
         except Exception as e:
             logging.error(e)
-            print(e)
+            writeLogJson("arc_file", 504, startTime, e)
             raise HTTPException(
-            status_code=500,
-            detail=f"File not found! Error: {e}, Try to log-in again!",
-        )
-        
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"File not found! Error: {e}, Try to log-in again!",
+            )
+
         logging.info(f"Sent info of {path} from ID: {id}")
         try:
             arcFileJson = arcFile.json()
@@ -989,27 +1028,35 @@ async def commitFile(
             "commit_message": commitMessage,
         }
 
-    request = requests.put(
-        f"{os.environ.get(getTarget(targetRepo))}/api/v4/projects/{id}/repository/files/{quote(repoPath, safe='')}",
-        data=json.dumps(payload),
-        headers=header,
-    )
+    try:
+        response = session.put(
+            f"{os.environ.get(getTarget(targetRepo))}/api/v4/projects/{id}/repository/files/{quote(repoPath, safe='')}",
+            data=json.dumps(payload),
+            headers=header,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("commitFile", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't upload data to the ARC! Error: {e}",
+        )
 
-    if not request.ok:
-        logging.error(f"Couldn't commit to ARC! ERROR: {request.content}")
+    if not response.ok:
+        logging.error(f"Couldn't commit to ARC! ERROR: {response.content}")
         writeLogJson(
             "commitFile",
             400,
             startTime,
-            f"Couldn't commit to ARC! ERROR: {request.content}",
+            f"Couldn't commit to ARC! ERROR: {response.content}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Couldn't commit file to repo! Error: {request.content}",
+            detail=f"Couldn't commit file to repo! Error: {response.content}",
         )
     logging.info(f"Updated file on path: {repoPath}")
     writeLogJson("commitFile", 200, startTime)
-    return request.content
+    return response.content
 
 
 # creates a new project in the repo with a readme file; we then initialize the repo folder on the server with the new id of the ARC;
@@ -1054,20 +1101,6 @@ async def createArc(
             detail="Missing content for arc creation!",
         )
 
-    retry = Retry(
-        total=5,
-        backoff_factor=4,
-        status_forcelist=[500, 400, 502, 429, 503, 504],
-        allowed_methods=["POST", "PUT", "HEAD"],
-    )
-
-    adapter = HTTPAdapter(max_retries=retry)
-
-    session = requests.Session()
-
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-
     # here we create the project with the readme file
     project = {
         "name": name,
@@ -1088,9 +1121,9 @@ async def createArc(
         )
     except Exception as e:
         logging.error(e)
-        print(e)
+        writeLogJson("createArc", 504, startTime, e)
         raise HTTPException(
-            status_code=request.status_code,
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Couldn't upload file to repo! Error: {e}",
         )
 
@@ -1577,12 +1610,21 @@ async def createIsa(
         }
     )
     logging.debug("Sent commit request with payload " + str(payload))
+
     # send the data to the repo
-    commitRequest = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
-        headers=header,
-        data=payload,
-    )
+    try:
+        commitRequest = session.post(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+            headers=header,
+            data=payload,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("createISA", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't create new ISA! Error: {e}",
+        )
     if not commitRequest.ok:
         logging.error(f"Couldn't commit ISA to ARC! ERROR: {commitRequest.content}")
         writeLogJson(
@@ -1741,20 +1783,6 @@ async def uploadFile(
         ## START UPLOAD PROCESS ##
         ##########################
 
-        retry = Retry(
-            total=6,
-            backoff_factor=4,
-            status_forcelist=[500, 400, 502, 429, 503, 504],
-            allowed_methods=["POST", "PUT", "HEAD"],
-        )
-
-        adapter = HTTPAdapter(max_retries=retry)
-
-        session = requests.Session()
-
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-
         # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
         if lfs == "true":
             if namespace == "":
@@ -1806,9 +1834,9 @@ async def uploadFile(
                 r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
             except Exception as e:
                 logging.error(e)
-                print(e)
+                writeLogJson("uploadFile", 504, startTime, e)
                 raise HTTPException(
-                    status_code=request.status_code,
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                     detail=f"Couldn't upload file to repo! Error: {e}",
                 )
 
@@ -1867,30 +1895,30 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    print(e)
+                    writeLogJson("uploadFile", 504, startTime, e)
                     raise HTTPException(
-                        status_code=request.status_code,
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                         detail=f"Couldn't upload file to repo! Error: {e}",
                     )
 
                 if not res.ok:
                     try:
-                        responseJson = retry.json()
+                        responseJson = res.json()
                         responseJson["error"] != None
                     except:
                         responseJson = {
                             "error": "Couldn't upload file",
                             "error_description": "Couldn't upload file to the lfs storage!",
                         }
-                        logging.error(f"Couldn't upload to ARC! ERROR: {retry.content}")
+                        logging.error(f"Couldn't upload to ARC! ERROR: {res.content}")
                         writeLogJson(
                             "uploadFile",
                             400,
                             startTime,
-                            f"Couldn't upload to ARC! ERROR: {retry.content}",
+                            f"Couldn't upload to ARC! ERROR: {res.content}",
                         )
                         raise HTTPException(
-                            status_code=retry.status_code,
+                            status_code=res.status_code,
                             detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                         )
 
@@ -1929,9 +1957,9 @@ async def uploadFile(
 
             except Exception as e:
                 logging.error(e)
-                print(e)
+                writeLogJson("uploadFile", 504, startTime, e)
                 raise HTTPException(
-                    status_code=request.status_code,
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                     detail=f"Couldn't upload file to repo! Error: {e}",
                 )
 
@@ -1972,9 +2000,9 @@ async def uploadFile(
                 getResponse = session.get(url, headers=headers)
             except Exception as e:
                 logging.error(e)
-                print(e)
+                writeLogJson("uploadFile", 504, startTime, e)
                 raise HTTPException(
-                    status_code=request.status_code,
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                     detail=f"Couldn't upload file to repo! Error: {e}",
                 )
 
@@ -1996,9 +2024,9 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    print(e)
+                    writeLogJson("uploadFile", 504, startTime, e)
                     raise HTTPException(
-                        status_code=request.status_code,
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                         detail=f"Couldn't upload file to repo! Error: {e}",
                     )
 
@@ -2052,9 +2080,9 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    print(e)
+                    writeLogJson("uploadFile", 504, startTime, e)
                     raise HTTPException(
-                        status_code=request.status_code,
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                         detail=f"Couldn't upload file to repo! Error: {e}",
                     )
 
@@ -2112,9 +2140,9 @@ async def uploadFile(
                 )
             except Exception as e:
                 logging.error(e)
-                print(e)
+                writeLogJson("uploadFile", 504, startTime, e)
                 raise HTTPException(
-                    status_code=request.status_code,
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                     detail=f"Couldn't upload file to repo! Error: {e}",
                 )
 
@@ -2137,9 +2165,9 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    print(e)
+                    writeLogJson("uploadFile", 504, startTime, e)
                     raise HTTPException(
-                        status_code=request.status_code,
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                         detail=f"Couldn't upload file to repo! Error: {e}",
                     )
 
@@ -2164,9 +2192,9 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    print(e)
+                    writeLogJson("uploadFile", 504, startTime, e)
                     raise HTTPException(
-                        status_code=request.status_code,
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                         detail=f"Couldn't upload file to repo! Error: {e}",
                     )
 
@@ -2704,27 +2732,35 @@ async def createFolder(
             detail="Missing Properties for the folder!",
         )
 
-    request = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-        headers=header,
-        data=json.dumps(payload),
-    )
+    try:
+        response = requests.post(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+            headers=header,
+            data=json.dumps(payload),
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("createFolder", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't create a new folder! Error: {e}",
+        )
 
-    if not request.ok:
-        logging.error(f"Couldn't create folder {path} ! ERROR: {request.content}")
+    if not response.ok:
+        logging.error(f"Couldn't create folder {path} ! ERROR: {response.content}")
         writeLogJson(
             "createFolder",
             400,
             startTime,
-            f"Couldn't create folder {path} ! ERROR: {request.content}",
+            f"Couldn't create folder {path} ! ERROR: {response.content}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Couldn't create folder on repo! Error: {request.content}",
+            detail=f"Couldn't create folder on repo! Error: {response.content}",
         )
     logging.info(f"Created folder on path: {path}")
     writeLogJson("createFolder", 201, startTime)
-    return request.content
+    return response.content
 
 
 # sends back a list of metrics for display
@@ -2846,6 +2882,7 @@ async def getBranches(
     "/addDatamap",
     summary="Creates a new datamap",
     status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
 )
 async def addDatamap(
     request: Request, datamapContent: datamapContent, data: Annotated[str, Cookie()]
@@ -3030,11 +3067,19 @@ async def renameFolder(
         "actions": payload,
     }
 
-    moveRequest = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
-        headers=header,
-        data=json.dumps(requestData),
-    )
+    try:
+        moveRequest = session.post(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+            headers=header,
+            data=json.dumps(requestData),
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("renameFolder", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't rename folder! Error: {e}",
+        )
 
     if not moveRequest.ok:
         logging.error(
