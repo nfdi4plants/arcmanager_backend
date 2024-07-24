@@ -151,6 +151,7 @@ async def callback(request: Request, datahub: str):
         samesite="strict",
     )
     response.set_cookie("logged_in", "true", httponly=False)
+    response.set_cookie("timer", time.time(), httponly=False)
 
     try:
         username = await getUserName(datahub, userInfo, access_token)
@@ -180,5 +181,6 @@ async def logout(request: Request):
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
+    response.delete_cookie("timer")
     request.cookies.clear()
     return response
