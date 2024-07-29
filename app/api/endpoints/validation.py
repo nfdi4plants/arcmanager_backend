@@ -99,17 +99,9 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
         if isinstance(studyContent, str):
             fullValidArc = False
 
-        studyValid = await validateStudy(request, id, f"studies/{entry}", data)
-
-        for identifier in studyValid:
-            if not studyValid[identifier]:
-                fullValidArc = False
-                break
-
         valid["Studies"].append(
             {
                 entry: studyContent,
-                "identifier": studyValid,
             }
         )
 
@@ -176,6 +168,7 @@ async def validateInvestigation(
     return investSection
 
 
+# validates title, description and identifier in a study (UNUSED)
 async def validateStudy(
     request: Request, id: int, path: str, data: Annotated[str, Cookie()]
 ) -> dict[str, bool]:
