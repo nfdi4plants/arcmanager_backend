@@ -1,7 +1,7 @@
 # arcmanager_backend
 
 This is the Backend for the arcmanager.
-It runs with fastapi and uvicorn
+It runs with [FastAPI](https://fastapi.tiangolo.com/) and [uvicorn](https://www.uvicorn.org/).
 
 Both need to be installed first:
 
