@@ -163,6 +163,15 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
         logging.warning("Error while logging to log json!")
 
 
+# converts bit size into human readable byte size
+def fileSizeReadable(size: int) -> str:
+    for unit in ("bytes", "Kb", "Mb", "Gb"):
+        if abs(size) < 1024.0:
+            return f"{size:3.1f} {unit}"
+        size /= 1024.0
+    return f"{size} Bits"
+
+
 # get a list of all arcs accessible to the user
 @router.get(
     "/arc_list",
@@ -762,7 +771,7 @@ async def arc_file(
     else:
         # if file is too big, skip requesting it
         if int(fileSize) > 50000000:
-            logging.warning("File too large! Size: " + fileSize)
+            logging.warning("File too large! Size: " + fileSizeReadable(int(fileSize)))
             writeLogJson(
                 "arc_file",
                 413,
@@ -1988,7 +1997,7 @@ async def uploadFile(
             logging.debug("Uploading pointer file to repo...")
             # logging
             logging.info(
-                f"Uploaded new File {name} to repo {id} on path: {branch} with LFS"
+                f"Uploaded new File {name} to repo {id} on path: {branch} with LFS. Size: {fileSizeReadable(size)}"
             )
 
             ## add filename to the gitattributes
@@ -2813,7 +2822,7 @@ async def getMetrics(request: Request, pwd: str):
         except:
             statusCodes[entry["status"]] = 1
         # if there is an error, add it to the array
-        if entry["error"] != None:
+        if entry["error"] != None and entry["error"] != "None":
             errors.append(f"{entry['endpoint']}, {entry['status']}: {entry['error']}")
 
     return {
