@@ -33,6 +33,7 @@ from starlette.status import (
 import logging
 import time
 
+from cryptography.fernet import Fernet
 from pdf2image import convert_from_bytes  # type: ignore
 from io import BytesIO
 
@@ -70,11 +71,13 @@ router = APIRouter()
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     format="%(asctime)s-%(levelname)s-%(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
     level=logging.DEBUG,
 )
+
+logging.getLogger("multipart").setLevel(logging.INFO)
 
 # request sessions to retry the important requests
 retry = Retry(
@@ -138,7 +141,15 @@ def getData(cookie: str):
         + b"\n-----END PUBLIC KEY-----"
     )
 
-    return jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
+    decodedToken = jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
+    fernetKey = os.environ.get("FERNET").encode()
+    try:
+        decodedToken["gitlab"] = (
+            Fernet(fernetKey).decrypt(decodedToken["gitlab"].encode()).decode()
+        )
+    except:
+        pass
+    return decodedToken
 
 
 # writes the log entry into the json log file

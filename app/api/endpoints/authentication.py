@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse
 from starlette.config import Config
 import urllib
 from app.api.endpoints.projects import getUserName
+from cryptography.fernet import Fernet
 
 # from starlette.requests import Request
 from starlette.responses import HTMLResponse
@@ -20,7 +21,6 @@ import time
 ## Read Oauth client info from .env for production
 config = Config(".env")
 oauth = OAuth(config)
-# oauth = OAuth()
 
 oauth.register(
     name="dev",
@@ -47,6 +47,11 @@ oauth.register(
 )
 
 
+def encryptToken(content: bytes) -> bytes:
+    fernetKey = os.environ.get("FERNET").encode()
+    return Fernet(fernetKey).encrypt(content)
+
+
 def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
     try:
         with open("log.json", "r") as log:
@@ -56,7 +61,7 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
             {
                 "endpoint": endpoint,
                 "status": status,
-                "error": error,
+                "error": str(error),
                 "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
                 "response_time": time.time() - startTime,
             }
@@ -139,7 +144,10 @@ async def callback(request: Request, datahub: str):
         + os.environ.get("PRIVATE_RSA").encode()
         + b"\n-----END RSA PRIVATE KEY-----"
     )
-    cookieData = {"gitlab": access_token, "target": datahub}
+    cookieData = {
+        "gitlab": encryptToken(access_token.encode()).decode(),
+        "target": datahub,
+    }
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
