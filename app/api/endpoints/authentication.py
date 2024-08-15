@@ -45,6 +45,11 @@ oauth.register(
     client_kwargs={"scope": "openid api profile"},
 )
 
+oauth.register(
+    name="tuebingen_testenv",
+    server_metadata_url="https://gitlab.test-nfdi4plants.de/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid api profile"},
+)
 
 def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
     with open("log.json", "r") as log:
@@ -88,6 +93,8 @@ async def login(request: Request, datahub: str):
             return await oauth.plantmicrobe.authorize_redirect(request, redirect_uri)
         elif datahub == "tuebingen":
             return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
+        elif datahub == "tuebingen_testenv":
+            return await oauth.tuebingen_testenv.authorize_redirect(request, redirect_uri)
         else:
             return "invalid DataHUB selection"
 
@@ -118,6 +125,8 @@ async def callback(request: Request, datahub: str):
             token = await oauth.freiburg.authorize_access_token(request)
         elif datahub == "plantmicrobe":
             token = await oauth.plantmicrobe.authorize_access_token(request)
+        elif datahub == "tuebingen_testenv":
+            token = await oauth.tuebingen_testenv.authorize_access_token(request)
 
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error}</h1>")
