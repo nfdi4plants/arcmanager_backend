@@ -1,9 +1,11 @@
 import json
 from typing import Annotated
-from fastapi import APIRouter, Cookie, Request, Response, status
+from fastapi import APIRouter, Cookie, Request, Response
 from fastapi.responses import RedirectResponse
 from starlette.config import Config
+import urllib
 from app.api.endpoints.projects import getUserName
+from cryptography.fernet import Fernet
 
 # from starlette.requests import Request
 from starlette.responses import HTMLResponse
@@ -19,7 +21,6 @@ import time
 ## Read Oauth client info from .env for production
 config = Config(".env")
 oauth = OAuth(config)
-# oauth = OAuth()
 
 oauth.register(
     name="dev",
@@ -51,22 +52,30 @@ oauth.register(
     client_kwargs={"scope": "openid api profile"},
 )
 
+def encryptToken(content: bytes) -> bytes:
+    fernetKey = os.environ.get("FERNET").encode()
+    return Fernet(fernetKey).encrypt(content)
+
+
 def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
-    with open("log.json", "r") as log:
-        jsonLog = json.load(log)
+    try:
+        with open("log.json", "r") as log:
+            jsonLog = json.load(log)
 
-    jsonLog.append(
-        {
-            "endpoint": endpoint,
-            "status": status,
-            "error": error,
-            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
-            "response_time": time.time() - startTime,
-        }
-    )
+        jsonLog.append(
+            {
+                "endpoint": endpoint,
+                "status": status,
+                "error": str(error),
+                "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+                "response_time": time.time() - startTime,
+            }
+        )
 
-    with open("log.json", "w") as logWrite:
-        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+        with open("log.json", "w") as logWrite:
+            json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+    except:
+        print("Error while logging to json!")
 
 
 # redirect user to requested keycloak to enter login credentials
@@ -137,6 +146,7 @@ async def callback(request: Request, datahub: str):
         raise OAuthError(description="Failed retrieving the token data")
 
     userInfo = token.get("userinfo")["sub"]
+
     # read out private key from .env
     pr_key = (
         b"-----BEGIN RSA PRIVATE KEY-----\n"
@@ -144,26 +154,39 @@ async def callback(request: Request, datahub: str):
         + b"\n-----END RSA PRIVATE KEY-----"
     )
     cookieData = {
-        "gitlab": access_token,
+        "gitlab": encryptToken(access_token.encode()).decode(),
         "target": datahub,
     }
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
     response.set_cookie(
-        "data", encodedCookie, httponly=True, secure=True, samesite="strict"
+        "data",
+        encodedCookie,
+        httponly=True,
+        secure=True,
+        samesite="strict",
     )
     response.set_cookie("logged_in", "true", httponly=False)
-    response.set_cookie(
-        "username",
-        await getUserName(datahub, userInfo, access_token),
-        httponly=False,
-    )
+    response.set_cookie("timer", time.time(), httponly=False)
+
+    try:
+        username = await getUserName(datahub, userInfo, access_token)
+        response.set_cookie(
+            "username",
+            urllib.parse.quote(username),
+            httponly=False,
+        )
+    except:
+        response.set_cookie("username", "user", httponly=False)
     # delete any leftover error cookie
     response.delete_cookie("error")
 
     request.session.clear()
-    writeLogJson("callback", 307, startTime)
+    try:
+        writeLogJson("callback", 307, startTime)
+    except:
+        pass
     return response
 
 
@@ -175,5 +198,6 @@ async def logout(request: Request):
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
+    response.delete_cookie("timer")
     request.cookies.clear()
     return response

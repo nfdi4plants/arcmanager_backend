@@ -21,6 +21,16 @@ def getRowIndex(name: str, worksheet: FsWorksheet):
     return -1
 
 
+# sanitize input
+def sanitizeInput(input: str | list) -> str:
+    if type(input) is list:
+        return [sanitizeInput(entry) for entry in input]
+
+    if type(input) is str:
+        return input.replace("<", "&lt;").replace(">", "&gt;")
+    return input
+
+
 # reads out the given file and sends the content as json back
 def readIsaFile(path: str, type: str):
     # initiate isaFile structure
@@ -42,6 +52,10 @@ def readIsaFile(path: str, type: str):
 
             # the intended name stated in the arc specification
             sheetName2 = "isa_assay"
+
+        case "datamap":
+            return getSwateSheets(path, "datamap")
+
         case other:
             sheetName = sheetName2 = ""
 
@@ -64,7 +78,6 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     # construct the path with the given values (e.g. .../freiburg-33/isa.investigation.xlsx)
     pathName = f"{os.environ.get('BACKEND_SAVE')}{location}-{repoId}/{path}"
 
-    importIsa = Xlsx.from_xlsx_file(pathName)
     # match the correct sheet name with the given type of isa
 
     sheetIndex = -1
@@ -84,19 +97,13 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
             # the intended name stated in the arc specification
             sheetName = "isa_assay"
 
+        case "datamap":
+            sheetName = "isa_datamap"
+
+            sheetName2 = "Datamap"
+
         case other:
             sheetName = sheetName2 = ""
-
-    # get the index of the correct sheet
-    for i, sheet in enumerate(FsWorkbook.get_worksheets(importIsa)):
-        if sheet.name == sheetName or sheetName == sheetName2:
-            sheetIndex = i
-            break
-
-    if sheetIndex > -1:
-        sheetData = FsWorkbook.get_worksheets(importIsa)[sheetIndex]
-    else:
-        sheetData = FsWorkbook.get_worksheets(importIsa)[0]
 
     # read the file
     try:
@@ -111,11 +118,23 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
             isaFile = pd.read_excel(pathName, 0, engine="openpyxl")
 
     try:
+        importIsa = Xlsx.from_xlsx_file(pathName)
+        # get the index of the correct sheet
+        for i, sheet in enumerate(FsWorkbook.get_worksheets(importIsa)):
+            if sheet.name == sheetName or sheetName == sheetName2:
+                sheetIndex = i
+                break
+
+        if sheetIndex > -1:
+            sheetData = FsWorkbook.get_worksheets(importIsa)[sheetIndex]
+        else:
+            sheetData = FsWorkbook.get_worksheets(importIsa)[0]
+
         rowIndex = getRowIndex(newContent[0], sheetData)
 
         for x in range(1, len(newContent)):
             if newContent[x] != None and newContent[x] != "":
-                sheetData.SetValueAt(newContent[x], rowIndex, x + 1)
+                sheetData.SetValueAt(sanitizeInput(newContent[x]), rowIndex, x + 1)
         try:
             importIsa.RemoveWorksheet(sheetName)
         except:
@@ -132,43 +151,55 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
 
         # replace nan values with empty strings
         isaFile = isaFile.fillna("")
+        if newContent[0] != "":
+            # get the id of the row to edit
+            id = isaFile.index[
+                isaFile[isaFile[0:1].columns[0]] == newContent[0]
+            ].values[0]
 
-        # get the id of the row to edit
-        id = isaFile.index[isaFile[isaFile[0:1].columns[0]] == newContent[0]].values[0]
+            # get the current content to know what to replace
+            oldContent = isaFile[id : id + 1]
 
-        # get the current content to know what to replace
-        oldContent = isaFile[id : id + 1]
+            # Here we replace every entry in the corresponding field with the new value (column by column)
+            for x in range(1, len(newContent)):
+                # if there are new fields in newContent insert a new column "Unnamed: number" with empty fields
+                if x > oldContent.count(axis="columns").values[0] - 1:
+                    try:
+                        isaFile.insert(x, "Unnamed: " + str(x), "")
+                        # add the new field to old content to extent its length
+                        oldContent.insert(x, "Unnamed: " + str(x), "")
+                    except:
+                        isaFile.insert(x, "Unnamed")
+                        oldContent.insert(x, "Unnamed")
 
-        # Here we replace every entry in the corresponding field with the new value (column by column)
-        for x in range(1, len(newContent)):
-            # if there are new fields in newContent insert a new column "Unnamed: number" with empty fields
-            if x > oldContent.count(axis="columns").values[0] - 1:
-                try:
-                    isaFile.insert(x, "Unnamed: " + str(x), "")
-                    # add the new field to old content to extent its length
-                    oldContent.insert(x, "Unnamed: " + str(x), "")
-                except:
-                    isaFile.insert(x, "Unnamed")
-                    oldContent.insert(x, "Unnamed")
+                # get the name of the current column
+                columnName = isaFile[id : id + 1].columns[x]
 
-            # get the name of the current column
-            columnName = isaFile[id : id + 1].columns[x]
+                # read out the value on the row with the given id and the current column and replace it with the new value
+                isaFile[id : id + 1].at[id, columnName] = (
+                    isaFile[id : id + 1]
+                    .at[id, columnName]
+                    .replace(
+                        oldContent[isaFile[0:1].columns[x]].values[0],
+                        sanitizeInput(newContent[x]),
+                    )
+                )
 
-            # read out the value on the row with the given id and the current column and replace it with the new value
-            isaFile[id : id + 1].at[id, columnName] = (
-                isaFile[id : id + 1]
-                .at[id, columnName]
-                .replace(oldContent[isaFile[0:1].columns[x]].values[0], newContent[x])
-            )
-
-        # save the changes to the excel file
-        with pd.ExcelWriter(
-            pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
-        ) as writer:
-            isaFile.to_excel(
-                writer, sheet_name=sheetName, merge_cells=False, index=False
-            )
-
+            # save the changes to the excel file
+            try:
+                with pd.ExcelWriter(
+                    pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
+                ) as writer:
+                    isaFile.to_excel(
+                        writer, sheet_name=sheetName, merge_cells=False, index=False
+                    )
+            except:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Error writing the Excel File. Please check your excel file and try to repair it if corrupted!",
+                )
+        else:
+            return "Nothing changed, row not found!"
     # return the name of the row back
     return isaFile.iat[id, 0]
 
@@ -179,7 +210,7 @@ def getIsaType(path: str):
     pathSplit = path.split("/")
 
     # take the top entry of the array
-    fileName = pathSplit.pop()
+    fileName = pathSplit.pop().lower()
 
     # check if the file is starting with "isa" and ending with "xlsx"
     if fileName[:3] == "isa" and fileName[-4:] == "xlsx":
@@ -225,6 +256,20 @@ def getSwateSheets(path: str, type: str):
 
             names = [x for x in sheetNames if x != "Assay" and x != "isa_assay"]
 
+        case "datamap":
+            sheetNames = excelFile.sheet_names
+
+            sheets = [
+                loads(
+                    pd.read_excel(path, sheet_name=x, engine="openpyxl").to_json(
+                        orient="split"
+                    )
+                )
+                for x in sheetNames
+            ]
+
+            names = [x for x in sheetNames]
+
     return sheets, names
 
 
@@ -234,15 +279,21 @@ def createSheet(sheetContent: sheetContent, target: str):
     content = []
 
     tableHead = sheetContent.tableHead
-    tableData = sheetContent.tableContent
+    tableData = sanitizeInput(sheetContent.tableContent)
     path = sheetContent.path
-    name = sheetContent.name
+    name = sheetContent.name.replace(" ", "_")
     id = sheetContent.id
 
     # loop column by column
     for i, entry in enumerate(tableHead):
         columnData = [cell for cell in tableData[i]]
-        head.append(str(entry["Type"]))
+        try:
+            if entry["Custom"]:
+                head.append(sanitizeInput(str(entry["Type"])) + "[C]")
+            else:
+                head.append(sanitizeInput(str(entry["Type"])))
+        except:
+            head.append(sanitizeInput(str(entry["Type"])))
         content.append(columnData)
 
     df = pd.DataFrame({head[0]: content[0]})
@@ -257,19 +308,31 @@ def createSheet(sheetContent: sheetContent, target: str):
 
     pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{path}"
 
-    # save data to file
-    with pd.ExcelWriter(
-        pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
-    ) as writer:
-        df.to_excel(writer, sheet_name=name, index=False)
-
+    try:
+        # save data to file
+        with pd.ExcelWriter(
+            pathName, engine="openpyxl", mode="a", if_sheet_exists="replace"
+        ) as writer:
+            df.to_excel(writer, sheet_name=name, index=False)
+    except:
+        raise HTTPException(
+            status_code=500,
+            detail="Error writing the Excel File. Please check your excel file and try to repair it if corrupted!",
+        )
     wb = openpyxl.load_workbook(filename=pathName)
 
-    # creates a new table inside of the excel sheet
-    tab = openpyxl.worksheet.table.Table(
-        displayName="annotationTable" + name,
-        ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
-    )
+    if getIsaType(path) == "datamap":
+        # creates a new table inside of the excel sheet
+        tab = openpyxl.worksheet.table.Table(
+            displayName="datamapTable" + name,
+            ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+        )
+    else:
+        # creates a new table inside of the excel sheet
+        tab = openpyxl.worksheet.table.Table(
+            displayName="annotationTable" + name,
+            ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+        )
 
     # styles an excel table sometimes similar to swate
     style = openpyxl.worksheet.table.TableStyleInfo(
@@ -320,10 +383,13 @@ def appendAssay(pathToAssay: str, pathToStudy: str, assayName: str):
             study.index[study["STUDY METADATA"] == "STUDY ASSAYS"].to_list()[0] + 1
         )
     except:
-        raise HTTPException(
-            status_code=400,
-            detail="Study has no STUDY ASSAYS field",
-        )
+        try:
+            assayIndex = study.index[study["STUDY"] == "STUDY ASSAYS"].to_list()[0] + 1
+        except:
+            raise HTTPException(
+                status_code=400,
+                detail="Study has no STUDY ASSAYS field",
+            )
 
     # the number of columns
     columnLength = len(study.columns.to_list())
@@ -369,12 +435,17 @@ def appendAssay(pathToAssay: str, pathToStudy: str, assayName: str):
     for x in range(len(assay)):
         study.iat[assayIndex + x, freeColumn] = assay.iat[x, 1]
 
-    # save the changes to the excel file
-    with pd.ExcelWriter(
-        pathToStudy, engine="openpyxl", mode="a", if_sheet_exists="replace"
-    ) as writer:
-        study.to_excel(writer, sheet_name=sheetName, merge_cells=False, index=False)
-
+    try:
+        # save the changes to the excel file
+        with pd.ExcelWriter(
+            pathToStudy, engine="openpyxl", mode="a", if_sheet_exists="replace"
+        ) as writer:
+            study.to_excel(writer, sheet_name=sheetName, merge_cells=False, index=False)
+    except:
+        raise HTTPException(
+            status_code=500,
+            detail="Error writing the Excel File. Please check your excel file and try to repair it if corrupted!",
+        )
     return study.to_json()
 
 
@@ -455,11 +526,19 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
         for y in range(len(study.columns)):
             invest.iat[rowIndex + x, y] = study.iat[x, y]
 
-    # save the changes to the excel file
-    with pd.ExcelWriter(
-        pathToInvest, engine="openpyxl", mode="a", if_sheet_exists="replace"
-    ) as writer:
-        invest.to_excel(writer, sheet_name=sheetName, merge_cells=False, index=False)
+    try:
+        # save the changes to the excel file
+        with pd.ExcelWriter(
+            pathToInvest, engine="openpyxl", mode="a", if_sheet_exists="replace"
+        ) as writer:
+            invest.to_excel(
+                writer, sheet_name=sheetName, merge_cells=False, index=False
+            )
+    except:
+        raise HTTPException(
+            status_code=500,
+            detail="Error writing the Excel File. Please check your excel file and try to repair it if corrupted!",
+        )
 
     return invest.to_json()
 

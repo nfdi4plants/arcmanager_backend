@@ -314,3 +314,38 @@ async def editUser(
     writeLogJson("editUser", 200, startTime)
 
     return f"The user {username} was edited successfully!"
+
+
+# returns a list of all groups the user is part of
+@router.get("/getGroups", summary="Get a list of the users groups")
+async def getGroups(request: Request, data: Annotated[str, Cookie()]) -> list:
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+        # request arc studies
+        groups = requests.get(
+            f"{os.environ.get(target)}/api/v4/groups",
+            headers=header,
+        )
+
+        groupsJson = groups.json()
+
+        if not groups.ok:
+            raise HTTPException(status_code=groups.status_code, detail=groupsJson)
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getStudies",
+            401,
+            startTime,
+            f"No authorized Cookie found!",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+
+    writeLogJson("getStudies", 200, startTime)
+    return [{"name": x["name"], "id": x["id"]} for x in groupsJson]

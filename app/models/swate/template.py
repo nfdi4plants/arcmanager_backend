@@ -24,7 +24,7 @@ class Value2(BaseModel):
 
 class Value1(BaseModel):
     celltype: str
-    values: List[Union[str, Value2]]
+    values: List[Union[str, Value2, dict]]
 
 
 class Table(BaseModel):
@@ -53,8 +53,8 @@ class Template(BaseModel):
     organisation: str = Field(examples=["DataPLANT"])
     version: str = Field(examples=["1.2.0"])
     authors: List[Author]
-    endpoint_repositories: List
-    tags: List[Tag]
+    endpoint_repositories: Optional[List]
+    tags: Optional[List[Tag]]
     last_updated: str = Field(examples=["2024-02-02T23:38:44.0000000"])
 
 
