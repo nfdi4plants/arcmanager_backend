@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -13,6 +14,7 @@ class arcContent(BaseModel):
     name: str = Field(examples=["New Arc"])
     description: str = Field(examples=["This is a description for the new Arc"])
     investIdentifier: str = Field(examples=["newArc123"])
+    groupId: Optional[int] = Field(examples=[407], default=None)
 
 
 class newIsa(BaseModel):
@@ -35,6 +37,7 @@ class sheetContent(BaseModel):
     path: str = Field(examples=["assays/assay1/isa.assay.xlsx"])
     id: int = Field(examples=[230])
     name: str = Field(examples=["Strain"])
+    branch: str = Field(examples=["main"])
 
 
 class syncAssayContent(BaseModel):
@@ -75,3 +78,9 @@ class templateContent(BaseModel):
     version: str
     username: dict
     tags: list
+
+
+class datamapContent(BaseModel):
+    id: int = Field(examples=[230])
+    path: str = Field(examples=["assays/assay1/dataset"])
+    branch: str = Field(examples=["main"])

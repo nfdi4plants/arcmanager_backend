@@ -2,7 +2,7 @@ import os
 
 import dotenv
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
@@ -22,7 +22,7 @@ app = FastAPI(
     summary="ARCmanager API enables you to read out and write to your ARC in any datahub",
     docs_url="/arcmanager/api/v1/docs",
     openapi_url="/arcmanager/api/v1/openapi.json",
-    version="0.7.1",
+    version="0.9.4",
     description=description,
 )
 
@@ -58,6 +58,5 @@ app.add_middleware(
 app.add_middleware(
     SessionMiddleware, secret_key=os.environ.get("SECRET_KEY"), max_age=None
 )
-
 
 app.include_router(api_router)
