@@ -22,7 +22,7 @@ app = FastAPI(
     summary="ARCmanager API enables you to read out and write to your ARC in any datahub",
     docs_url="/arcmanager/api/v1/docs",
     openapi_url="/arcmanager/api/v1/openapi.json",
-    version="0.9.3",
+    version="0.9.4",
     description=description,
 )
 

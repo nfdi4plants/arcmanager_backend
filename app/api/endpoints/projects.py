@@ -185,6 +185,44 @@ def fileSizeReadable(size: int) -> str:
     return f"{size} Bits"
 
 
+# remove a file from gitattributes if its no longer lfs tracked (through either deletion or upload directly without lfs)
+def removeFromGitAttributes(token, id: int, branch: str, filepath: str) -> str | int:
+    try:
+        target = getTarget(token["target"])
+        headers = {
+            "Authorization": f"Bearer {token['gitlab']}",
+            "Content-Type": "application/json",
+        }
+    except:
+        return 500
+    url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
+    attributes = requests.get(url, headers=headers)
+
+    if not attributes.ok:
+        return attributes.status_code
+    content = attributes.text
+    content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", "")
+    content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs\n", "")
+
+    postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
+
+    attributeData = {
+        "branch": branch,
+        "content": content,
+        "commit_message": "Update .gitattributes",
+    }
+    try:
+        response = session.put(postUrl, headers=headers, data=json.dumps(attributeData))
+    except Exception as e:
+        logging.error(e)
+        return 504
+
+    if not response.ok:
+        return response.status_code
+
+    return "Replaced"
+
+
 # get a list of all arcs accessible to the user
 @router.get(
     "/arc_list",
@@ -2234,7 +2272,7 @@ async def uploadFile(
 
             # logging
             logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")
-
+            removeFromGitAttributes(token, id, branch, path)
             response = Response(request.content, statusCode)
             writeLogJson(
                 "uploadFile",
@@ -2599,6 +2637,7 @@ async def deleteFile(
             detail=f"Couldn't delete file on repo! Error: {deletion.content}",
         )
     logging.info(f"Deleted file on path: {path}")
+    removeFromGitAttributes(token, id, branch, path)
     writeLogJson("deleteFile", 200, startTime)
     return "Successfully deleted the file!"
 

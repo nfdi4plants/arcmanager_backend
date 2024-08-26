@@ -52,6 +52,7 @@ oauth.register(
     client_kwargs={"scope": "openid api profile"},
 )
 
+
 def encryptToken(content: bytes) -> bytes:
     fernetKey = os.environ.get("FERNET").encode()
     return Fernet(fernetKey).encrypt(content)
@@ -103,7 +104,9 @@ async def login(request: Request, datahub: str):
         elif datahub == "tuebingen":
             return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
         elif datahub == "tuebingen_testenv":
-            return await oauth.tuebingen_testenv.authorize_redirect(request, redirect_uri)
+            return await oauth.tuebingen_testenv.authorize_redirect(
+                request, redirect_uri
+            )
         else:
             return "invalid DataHUB selection"
 
