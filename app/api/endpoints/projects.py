@@ -117,6 +117,8 @@ def getTarget(target: str) -> str:
             return "GITLAB_PLANTMICROBE"
         case "tuebingen":
             return "GITLAB_TUEBINGEN"
+        case "tuebingen_testenv":
+            return "GITLAB_TUEBINGEN_TESTENV"
         case other:
             return "GITLAB_ADDRESS"
 
