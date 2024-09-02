@@ -16,7 +16,6 @@ import json
 import os
 import requests
 
-import logging
 import time
 import datetime
 
@@ -32,14 +31,6 @@ from app.api.endpoints.projects import (
 )
 
 router = APIRouter()
-
-logging.basicConfig(
-    filename="backend.log",
-    filemode="w",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
 
 
 # validates the arc
@@ -111,12 +102,10 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
         if isinstance(validInvest[entry], list):
             for contact in validInvest[entry]:
                 if isinstance(contact, str):
-                    print(contact)
                     fullValidArc = False
                     break
         else:
             if not validInvest[entry]:
-                print(entry)
                 fullValidArc = False
                 break
 

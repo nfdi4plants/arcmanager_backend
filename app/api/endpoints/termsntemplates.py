@@ -27,7 +27,7 @@ router = APIRouter()
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     format="%(asctime)s-%(levelname)s-%(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
     level=logging.DEBUG,

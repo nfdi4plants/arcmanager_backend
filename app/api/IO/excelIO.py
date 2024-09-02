@@ -142,11 +142,12 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
 
         importIsa.AddWorksheet(sheetData)
 
-        Xlsx.to_xlsx_file(
+        Xlsx.to_file(
             pathName,
             importIsa,
         )
-        return FsWorksheet.get_row_at(rowIndex, sheetData).Item(1).Value
+
+        return FsWorksheet.get_cell_at(rowIndex, 2, sheetData).Value
     except:
 
         # replace nan values with empty strings
