@@ -117,6 +117,7 @@ async def getTemplates() -> Templates:
     "/getTemplate",
     summary="Retrieve the specific template",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def getTemplate(id: str) -> TemplateBB:
     startTime = time.time()

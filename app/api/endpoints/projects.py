@@ -231,25 +231,19 @@ async def list_arcs(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
+
             try:
-                message = arcsJson["message"]
+                error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
             except:
-                try:
-                    error = arcsJson["error"]
-                    raise HTTPException(
-                        status_code=arcs.status_code,
-                        detail=error + ", " + arcsJson["error_description"],
-                    )
-                except:
-                    raise HTTPException(
-                        status_code=arcs.status_code,
-                        detail=str(arcsJson),
-                    )
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=str(arcsJson),
+                )
             raise HTTPException(
                 status_code=arcs.status_code,
-                detail="Error: " + message,
+                detail=error + ", " + errorDescription,
             )
-
         try:
             arcList = arcs.json()
             pages = int(arcs.headers["X-Total-Pages"])
@@ -291,16 +285,17 @@ async def list_arcs(
                 )
             try:
                 error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
 
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=error + ", " + arcsJson["error_description"],
-                )
             except:
                 raise HTTPException(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=error + ", " + errorDescription,
+            )
 
         try:
             arcList = arcs.json()
@@ -371,25 +366,21 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
+
             try:
-                message = arcsJson["message"]
+                error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
 
             except:
-                try:
-                    error = arcsJson["error"]
-                    raise HTTPException(
-                        status_code=arcs.status_code,
-                        detail=error + ", " + arcsJson["error_description"],
-                    )
-                except:
-                    raise HTTPException(
-                        status_code=arcs.status_code,
-                        detail="Error retrieving the ARCs! Please login again!",
-                    )
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
             raise HTTPException(
                 status_code=arcs.status_code,
-                detail="Message: " + message,
+                detail=error + ", " + errorDescription,
             )
+
         try:
             pages = int(arcs.headers["X-Total-Pages"])
             # if there is an error parsing the data to json, throw an exception
@@ -421,16 +412,17 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
                 )
             try:
                 error = arcsJson["error"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=error + ", " + arcsJson["error_description"],
-                )
+                errorDescription = arcsJson["error_description"]
+                
             except:
                 raise HTTPException(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
-
+            raise HTTPException(
+                                status_code=arcs.status_code,
+                                detail=error + ", " + errorDescription,
+                            )
         try:
             pages = int(arcs.headers["X-Total-Pages"])
 

@@ -330,10 +330,6 @@ async def getGroups(request: Request, data: Annotated[str, Cookie()]) -> list:
             headers=header,
         )
 
-        groupsJson = groups.json()
-
-        if not groups.ok:
-            raise HTTPException(status_code=groups.status_code, detail=groupsJson)
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -346,6 +342,15 @@ async def getGroups(request: Request, data: Annotated[str, Cookie()]) -> list:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authorized cookie found!",
         )
+    try:
+        groupsJson = groups.json()
+    except:
+        raise HTTPException(
+            status_code=groups.status_code,
+            detail="Error retrieving the list of groups!",
+        )
+    if not groups.ok:
+        raise HTTPException(status_code=groups.status_code, detail=groupsJson)
 
     writeLogJson("getStudies", 200, startTime)
     return [{"name": x["name"], "id": x["id"]} for x in groupsJson]

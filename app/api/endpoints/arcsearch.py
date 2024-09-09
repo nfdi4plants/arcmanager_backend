@@ -255,5 +255,5 @@ async def getArcJson():
         raise HTTPException(
             status_code=500, detail="Error reading the Arcs Json. Try recreating it!"
         )
-
+    logging.info("Sent arcsearch json list!")
     return data
