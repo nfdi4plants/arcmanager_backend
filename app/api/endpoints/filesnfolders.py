@@ -50,7 +50,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 retry = Retry(
     total=5,
     backoff_factor=4,
-    status_forcelist=[500, 502, 429, 503, 504],
+    status_forcelist=[500, 502, 429, 503, 504, 400],
     allowed_methods=["POST", "PUT", "HEAD"],
 )
 
@@ -70,7 +70,7 @@ def removeFromGitAttributes(
     branch: str,
     filepath: str | list[str],
     rename=False,
-    newPath:list[str]=[""],
+    newPath: list[str] = [""],
 ) -> str | int:
     try:
         target = getTarget(token["target"])
@@ -107,8 +107,8 @@ def removeFromGitAttributes(
                 )
     else:
         content = content.replace(
-                f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", ""
-            )
+            f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", ""
+        )
         content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs\n", "")
 
     postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
@@ -378,11 +378,17 @@ async def uploadFile(
 
             except Exception as e:
                 logging.error(e)
-                writeLogJson("uploadFile", 504, startTime, e)
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail=f"Couldn't upload file to repo! Error: {e}",
-                )
+                if fileHead.ok:
+                    response = requests.put(postUrl, headers=headers, json=jsonData)
+                else:
+                    response = requests.post(postUrl, headers=headers, json=jsonData)
+                if not response.ok:
+                    logging.error(f"Couldn't upload file! ERROR: {response.content}")
+                    writeLogJson("uploadFile", 504, startTime, f"Couldn't upload file! ERROR: {response.content}")
+                    raise HTTPException(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        detail=f"Couldn't upload file to repo! Error: {response.content}",
+                    )
 
             ## if it fails, return an error
             if not response.ok:
@@ -586,11 +592,18 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    writeLogJson("uploadFile", 504, startTime, e)
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    request = requests.post(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                        data=json.dumps(payload),
+                        headers=header,
                     )
+                    if not request.ok:
+                        logging.error(f"Couldn't upload file! ERROR: {request.content}")
+                        writeLogJson("uploadFile", 504, startTime, f"Couldn't upload file! ERROR: {request.content}")
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {request.content}",
+                        )
 
                 statusCode = status.HTTP_201_CREATED
 
@@ -613,11 +626,19 @@ async def uploadFile(
                     )
                 except Exception as e:
                     logging.error(e)
-                    writeLogJson("uploadFile", 504, startTime, e)
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {e}",
+                    # update the file to the gitlab
+                    request = session.put(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                        data=json.dumps(payload),
+                        headers=header,
                     )
+                    if not request.ok:
+                        logging.error(f"Couldn't upload file! ERROR: {request.content}")
+                        writeLogJson("uploadFile", 504, startTime, f"Couldn't upload file! ERROR: {request.content}")
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {request.content}",
+                        )
 
                 statusCode = status.HTTP_200_OK
 
