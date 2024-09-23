@@ -64,7 +64,14 @@ router = APIRouter()
 
 
 # remove a file from gitattributes if its no longer lfs tracked (through either deletion or upload directly without lfs)
-def removeFromGitAttributes(token, id: int, branch: str, filepath: str) -> str | int:
+def removeFromGitAttributes(
+    token,
+    id: int,
+    branch: str,
+    filepath: str | list[str],
+    rename=False,
+    newPath:list[str]=[""],
+) -> str | int:
     try:
         target = getTarget(token["target"])
         headers = {
@@ -79,8 +86,30 @@ def removeFromGitAttributes(token, id: int, branch: str, filepath: str) -> str |
     if not attributes.ok:
         return attributes.status_code
     content = attributes.text
-    content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", "")
-    content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs\n", "")
+
+    if type(filepath) is list:
+        for i, entry in enumerate(filepath):
+            if rename:
+                content = content.replace(
+                    f"{entry} filter=lfs diff=lfs merge=lfs -text\n",
+                    f"{newPath[i]} filter=lfs diff=lfs merge=lfs -text\n",
+                )
+                content = content.replace(
+                    f"{entry} filter=lfs diff=lfs merge=lfs\n",
+                    f"{newPath[i]} filter=lfs diff=lfs merge=lfs\n",
+                )
+            else:
+                content = content.replace(
+                    f"{entry} filter=lfs diff=lfs merge=lfs -text\n", ""
+                )
+                content = content.replace(
+                    f"{entry} filter=lfs diff=lfs merge=lfs\n", ""
+                )
+    else:
+        content = content.replace(
+                f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", ""
+            )
+        content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs\n", "")
 
     postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
 
@@ -718,29 +747,45 @@ async def deleteFolder(
             detail="You are not authorized to delete this folder",
         )
 
-    # get the content of the folder
-    folder = await arc_path(id, request, path, data)
+    # get the number of pages
+    arcPath = session.head(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&ref={branch}",
+        headers=header,
+    )
+
+    pages = int(arcPath.headers["X-Total-Pages"])
 
     # list of all files to be deleted
     payload = []
 
-    # async function filling the payload with all files recursively found in the folder
-    async def prepareJson(folder: Arc):
-        for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
-            # if its a file, add it to the list
-            if entry.type == "blob":
-                payload.append({"action": "delete", "file_path": entry.path})
+    # list of file names, that will be deleted from gitattributes after the remove request was successful
+    fileNames: list[str] = []
 
-            # if its a folder, search the folder for any file
-            elif entry.type == "tree":
-                await prepareJson(await arc_path(id, request, entry.path, data))
+    for page in range(1, pages + 1):
 
-            # this should never be the case, so pass along anything here
-            else:
-                pass
+        # get the content of the folder
+        folder = await arc_path(id, request, path, data, page)
 
-    # start searching and filling the payload
-    await prepareJson(folder)
+        # async function filling the payload with all files recursively found in the folder
+        async def prepareJson(folder: Arc):
+            for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
+                # if its a file, add it to the list
+                if entry.type == "blob":
+                    payload.append({"action": "delete", "file_path": entry.path})
+                    fileNames.append(entry.path)
+
+                # if its a folder, search the folder for any file
+                elif entry.type == "tree":
+                    await prepareJson(
+                        await arc_path(id, request, entry.path, data, page)
+                    )
+
+                # this should never be the case, so pass along anything here
+                else:
+                    pass
+
+        # start searching and filling the payload
+        await prepareJson(folder)
 
     # the final json containing all files to be deleted
     requestData = {
@@ -767,6 +812,9 @@ async def deleteFolder(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't delete folder on repo! Error: {deleteRequest.content}",
         )
+    else:
+        removeFromGitAttributes(token, id, branch, fileNames)
+
     logging.info(f"Deleted folder on path: {path}")
     writeLogJson("deleteFolder", 200, startTime)
     return "Successfully deleted the folder!"
@@ -914,37 +962,53 @@ async def renameFolder(
             newName = new[i]
             break
 
-    # get the content of the folder
-    folder = await arc_path(id, request, oldPath, data)
+    # get the number of pages
+    arcPath = session.head(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={oldPath}&ref={branch}",
+        headers=header,
+    )
+
+    pages = int(arcPath.headers["X-Total-Pages"])
 
     # list of all files to be deleted
     payload = []
 
-    # async function filling the payload with all files recursively found in the folder
-    async def prepareJson(folder: Arc):
-        for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
-            # if its a file, add it to the list
-            if entry.type == "blob":
-                payload.append(
-                    {
-                        "action": "move",
-                        "previous_path": entry.path,
-                        "file_path": entry.path.replace(
-                            oldName + "/", newName + "/", 1
-                        ),
-                    }
-                )
+    fileNames = []
+    newNames = []
 
-            # if its a folder, search the folder for any file
-            elif entry.type == "tree":
-                await prepareJson(await arc_path(id, request, entry.path, data))
+    for page in range(1, pages + 1):
+        # get the content of the folder
+        folder = await arc_path(id, request, oldPath, data, page)
 
-            # this should never be the case, so pass along anything here
-            else:
-                pass
+        # async function filling the payload with all files recursively found in the folder
+        async def prepareJson(folder: Arc):
+            for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
+                # if its a file, add it to the list
+                if entry.type == "blob":
+                    newPath = entry.path.replace(oldName + "/", newName + "/", 1)
+                    payload.append(
+                        {
+                            "action": "move",
+                            "previous_path": entry.path,
+                            "file_path": newPath,
+                        }
+                    )
+                    fileNames.append(entry.path)
+                    newNames.append(newPath)
 
-    # start searching and filling the payload
-    await prepareJson(folder)
+                # if its a folder, search the folder for any file
+                elif entry.type == "tree":
+                    await prepareJson(
+                        await arc_path(id, request, entry.path, data, page)
+                    )
+
+                # this should never be the case, so pass along anything here
+                else:
+                    pass
+
+        # start searching and filling the payload
+        await prepareJson(folder)
+
     # the final json containing all files to be deleted
     requestData = {
         "branch": branch,
@@ -980,6 +1044,8 @@ async def renameFolder(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Couldn't rename folder on repo! Error: {moveRequest.content}",
         )
+    else:
+        removeFromGitAttributes(token, id, branch, fileNames, True, newNames)
     logging.info(f"Renamed folder on path {oldPath} to {newPath}")
     writeLogJson("renameFolder", 200, startTime)
     return "Successfully renamed the folder!"
