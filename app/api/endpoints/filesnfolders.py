@@ -431,10 +431,15 @@ async def uploadFile(
                         detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                     )
                 else:
+                    # return exception if upload failed after 3 tries
+                    if x >= 2 and response.status_code == 400:
+                        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="File "+path+" could not be uploaded! Try again!")
                     # break the loop if response succeeds
                     break
-
+            
             ### end for loop ###
+
+
 
             logging.debug("Uploading pointer file to repo...")
             # logging
