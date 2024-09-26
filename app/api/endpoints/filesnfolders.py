@@ -50,7 +50,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 retry = Retry(
     total=5,
     backoff_factor=4,
-    status_forcelist=[500, 502, 429, 503, 504, 400],
+    status_forcelist=[500, 502, 429, 503, 504],
     allowed_methods=["POST", "PUT", "HEAD"],
 )
 
@@ -242,78 +242,26 @@ async def uploadFile(
                 "Content-type": "application/vnd.git-lfs+json",
             }
 
+            headers = {
+                "Authorization": f"Bearer {token['gitlab']}",
+                "Content-Type": "application/json",
+            }
+
             # construct the download url for the file
-            downloadUrl = "".join(
-                [
-                    "https://oauth2:",
-                    token["gitlab"],
-                    f"@{os.environ.get(target).split('//')[1]}/",
-                    f"{namespace}.git/info/lfs/objects/batch",
-                ]
-            )
-            try:
-                r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
-            except Exception as e:
-                logging.error(e)
-                writeLogJson("uploadFile", 504, startTime, e)
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail=f"Couldn't upload file to repo! Error: {e}",
-                )
+            downloadUrl = f"https://oauth2:{token['gitlab']}@{os.environ.get(target).split('//')[1]}/{namespace}.git/info/lfs/objects/batch"
 
-            if r.status_code == 401:
-                logging.warning(
-                    f"Client cookie not authorized! Cookies: {request.cookies}"
-                )
-                writeLogJson(
-                    "uploadFile",
-                    401,
-                    startTime,
-                    f"Client not authorized to create new ISA!",
-                )
-                raise HTTPException(
-                    status_code=HTTP_401_UNAUTHORIZED,
-                    detail="Not authorized to upload a File! Log in again!",
-                )
+            # loop the upload process in case there is an 400 error returned after uploading the pointer file
+            # (indicating that the file wasn't properly uploaded to lfs storage in the first place)
+            for x in range(0, 3):
+                # sleep for 10 secs increasing for each retry
+                time.sleep(x * 10)
+                if x > 0:
+                    logging.debug("Retry " + str(x) + " for file: " + name)
 
-            logging.debug("Posting download URL...")
-            try:
-                result = r.json()
-            except:
-                writeLogJson(
-                    "uploadFile",
-                    500,
-                    startTime,
-                    f"Error while uploading the file to lfs storage!",
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Error: There was an error uploading the file. Please re-authorize and try again!",
-                )
-
-            # test if there is a change in the file
-            testFail = False
-            try:
-                test = result["objects"][0]["actions"]
-
-            # if the file is the same, there will be no "actions" attribute
-            except:
-                testFail = True
-
-            # if the file is new or includes new content, upload it
-            if not testFail:
-                header_upload = result["objects"][0]["actions"]["upload"]["header"]
-                urlUpload = result["objects"][0]["actions"]["upload"]["href"]
-                header_upload.pop("Transfer-Encoding")
-                tempFile.seek(0, 0)
-                fileContent = tempFile.read()
+                ### Start upload process ###
 
                 try:
-                    res = session.put(
-                        urlUpload,
-                        headers=header_upload,
-                        data=fileContent,
-                    )
+                    r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
                 except Exception as e:
                     logging.error(e)
                     writeLogJson("uploadFile", 504, startTime, e)
@@ -322,100 +270,176 @@ async def uploadFile(
                         detail=f"Couldn't upload file to repo! Error: {e}",
                     )
 
-                if not res.ok:
+                if r.status_code == 401:
+                    logging.warning(
+                        f"Client cookie not authorized! Cookies: {request.cookies}"
+                    )
+                    writeLogJson(
+                        "uploadFile",
+                        401,
+                        startTime,
+                        f"Client not authorized to create new ISA!",
+                    )
+                    raise HTTPException(
+                        status_code=HTTP_401_UNAUTHORIZED,
+                        detail="Not authorized to upload a File! Log in again!",
+                    )
+                logging.debug("Posting download URL...")
+                try:
+                    result = r.json()
+                except:
+                    writeLogJson(
+                        "uploadFile",
+                        500,
+                        startTime,
+                        f"Error while uploading the file to lfs storage!",
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Error: There was an error uploading the file. Please re-authorize and try again!",
+                    )
+
+                try:
+                    logging.debug(name + ": " + str(sha256))
+                except:
+                    logging.debug("Result for " + name + ": " + str(r.content))
+
+                # test if there is a change in the file
+                testFail = False
+                try:
+                    test = result["objects"][0]["actions"]
+
+                # if the file is the same, there will be no "actions" attribute
+                except:
+                    testFail = True
+
+                # if the file is new or includes new content, upload it
+                if not testFail:
+                    header_upload = result["objects"][0]["actions"]["upload"]["header"]
+                    urlUpload = result["objects"][0]["actions"]["upload"]["href"]
+                    header_upload.pop("Transfer-Encoding")
+                    tempFile.seek(0, 0)
+                    fileContent = tempFile.read()
+
                     try:
-                        responseJson = res.json()
+                        res = session.put(
+                            urlUpload,
+                            headers=header_upload,
+                            data=fileContent,
+                        )
+                    except Exception as e:
+                        logging.error(e)
+                        writeLogJson("uploadFile", 504, startTime, e)
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {e}",
+                        )
+
+                    if not res.ok:
+                        try:
+                            responseJson = res.json()
+                            responseJson["error"] != None
+                        except:
+                            responseJson = {
+                                "error": "Couldn't upload file",
+                                "error_description": "Couldn't upload file to the lfs storage!",
+                            }
+                            logging.error(
+                                f"Couldn't upload to ARC! ERROR: {res.content}"
+                            )
+                            writeLogJson(
+                                "uploadFile",
+                                400,
+                                startTime,
+                                f"Couldn't upload to ARC! ERROR: {res.content}",
+                            )
+                            raise HTTPException(
+                                status_code=res.status_code,
+                                detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
+                            )
+
+                # build and upload the new pointer file to the arc
+                repoPath = quote(path, safe="")
+
+                postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}"
+
+                pointerContent = (
+                    f"version https://git-lfs.github.com/spec/v1\n"
+                    f"oid sha256:{sha256}\nsize {size}\n"
+                )
+
+                jsonData = {
+                    "branch": branch,
+                    "content": pointerContent,
+                    "commit_message": "Create a new lfs pointer file",
+                }
+
+                try:
+                    # check if file already exists
+                    fileHead = session.head(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
+                        headers=header,
+                    )
+                    if fileHead.ok:
+                        response = session.put(postUrl, headers=headers, json=jsonData)
+
+                    else:
+                        response = session.post(postUrl, headers=headers, json=jsonData)
+
+                except Exception as e:
+                    logging.error(e)
+                    if fileHead.ok:
+                        response = requests.put(postUrl, headers=headers, json=jsonData)
+                    else:
+                        response = requests.post(
+                            postUrl, headers=headers, json=jsonData
+                        )
+                    if not response.ok:
+                        logging.error(
+                            f"Couldn't upload file! ERROR: {response.content}"
+                        )
+                        writeLogJson(
+                            "uploadFile",
+                            504,
+                            startTime,
+                            f"Couldn't upload file! ERROR: {response.content}",
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {response.content}",
+                        )
+
+                ## if it fails, return an error or start again
+                if not response.ok and response.status_code != 400:
+                    try:
+                        responseJson = response.json()
                         responseJson["error"] != None
                     except:
                         responseJson = {
                             "error": "Couldn't upload file",
-                            "error_description": "Couldn't upload file to the lfs storage!",
+                            "error_description": "Couldn't upload pointer file to the ARC!",
                         }
-                        logging.error(f"Couldn't upload to ARC! ERROR: {res.content}")
-                        writeLogJson(
-                            "uploadFile",
-                            400,
-                            startTime,
-                            f"Couldn't upload to ARC! ERROR: {res.content}",
-                        )
-                        raise HTTPException(
-                            status_code=res.status_code,
-                            detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                        )
-
-            # build and upload the new pointer file to the arc
-            repoPath = quote(path, safe="")
-
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}"
-
-            pointerContent = (
-                f"version https://git-lfs.github.com/spec/v1\n"
-                f"oid sha256:{sha256}\nsize {size}\n"
-            )
-
-            headers = {
-                "Authorization": f"Bearer {token['gitlab']}",
-                "Content-Type": "application/json",
-            }
-
-            jsonData = {
-                "branch": branch,
-                "content": pointerContent,
-                "commit_message": "create a new lfs pointer file",
-            }
-
-            try:
-                # check if file already exists
-                fileHead = session.head(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
-                    headers=header,
-                )
-                if fileHead.ok:
-                    response = session.put(postUrl, headers=headers, json=jsonData)
-
-                else:
-                    response = session.post(postUrl, headers=headers, json=jsonData)
-
-            except Exception as e:
-                logging.error(e)
-                if fileHead.ok:
-                    response = requests.put(postUrl, headers=headers, json=jsonData)
-                else:
-                    response = requests.post(postUrl, headers=headers, json=jsonData)
-                if not response.ok:
-                    logging.error(f"Couldn't upload file! ERROR: {response.content}")
-                    writeLogJson("uploadFile", 504, startTime, f"Couldn't upload file! ERROR: {response.content}")
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {response.content}",
+                    logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+                    writeLogJson(
+                        "uploadFile",
+                        400,
+                        startTime,
+                        f"Couldn't upload to ARC! ERROR: {response.content}",
                     )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
+                    )
+                else:
+                    # break the loop if response succeeds
+                    break
 
-            ## if it fails, return an error
-            if not response.ok:
-                try:
-                    responseJson = response.json()
-                    responseJson["error"] != None
-                except:
-                    responseJson = {
-                        "error": "Couldn't upload file",
-                        "error_description": "Couldn't upload pointer file to the ARC!",
-                    }
-                logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
-                writeLogJson(
-                    "uploadFile",
-                    400,
-                    startTime,
-                    f"Couldn't upload to ARC! ERROR: {response.content}",
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                )
+            ### end for loop ###
 
             logging.debug("Uploading pointer file to repo...")
             # logging
             logging.info(
-                f"Uploaded new File {name} to repo {id} on path: {branch} with LFS. Size: {fileSizeReadable(size)}"
+                f"Uploaded new File {name} to repo {id} on path: {path} with LFS. Size: {fileSizeReadable(size)}"
             )
 
             ## add filename to the gitattributes
@@ -599,7 +623,12 @@ async def uploadFile(
                     )
                     if not request.ok:
                         logging.error(f"Couldn't upload file! ERROR: {request.content}")
-                        writeLogJson("uploadFile", 504, startTime, f"Couldn't upload file! ERROR: {request.content}")
+                        writeLogJson(
+                            "uploadFile",
+                            504,
+                            startTime,
+                            f"Couldn't upload file! ERROR: {request.content}",
+                        )
                         raise HTTPException(
                             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                             detail=f"Couldn't upload file to repo! Error: {request.content}",
@@ -634,7 +663,12 @@ async def uploadFile(
                     )
                     if not request.ok:
                         logging.error(f"Couldn't upload file! ERROR: {request.content}")
-                        writeLogJson("uploadFile", 504, startTime, f"Couldn't upload file! ERROR: {request.content}")
+                        writeLogJson(
+                            "uploadFile",
+                            504,
+                            startTime,
+                            f"Couldn't upload file! ERROR: {request.content}",
+                        )
                         raise HTTPException(
                             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                             detail=f"Couldn't upload file to repo! Error: {request.content}",
