@@ -433,6 +433,13 @@ async def uploadFile(
                 else:
                     # return exception if upload failed after 3 tries
                     if x >= 2 and response.status_code == 400:
+                        logging.error("File "+path+" failed to upload after three tries! ERROR: "+{response.content})
+                        writeLogJson(
+                        "uploadFile",
+                        500,
+                        startTime,
+                        f"Couldn't upload to ARC after three tries! ERROR: {response.content}",
+                    )
                         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="File "+path+" could not be uploaded! Try again!")
                     # break the loop if response succeeds
                     break
