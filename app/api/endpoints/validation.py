@@ -53,7 +53,7 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
 
     arcContent = checkContent(
         arc,
-        ["studies", "assays", "workflows", "runs", "isa.investigation.xlsx", ".arc"],
+        ["studies", "assays", "workflows", "runs", "isa.investigation.xlsx"],
     )
 
     if isinstance(arcContent, str):

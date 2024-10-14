@@ -48,9 +48,9 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 
 # request sessions to retry the important requests
 retry = Retry(
-    total=5,
-    backoff_factor=4,
-    status_forcelist=[500, 502, 429, 503, 504],
+    total=3,
+    backoff_factor=5,
+    status_forcelist=[500, 502, 429, 503, 504, 400],
     allowed_methods=["POST", "PUT", "HEAD"],
 )
 
@@ -142,8 +142,8 @@ async def uploadFile(
     file: Annotated[bytes, File()],
     name: Annotated[str, Form()],
     id: Annotated[int, Form()],
-    branch: Annotated[str, Form()],
     path: Annotated[str, Form()],
+    branch: Annotated[str, Form()] = "main",
     namespace: Annotated[str, Form()] = "",
     lfs: Annotated[str, Form()] = False,
     chunkNumber: Annotated[int, Form()] = 0,
@@ -394,20 +394,6 @@ async def uploadFile(
                         response = requests.post(
                             postUrl, headers=headers, json=jsonData
                         )
-                    if not response.ok:
-                        logging.error(
-                            f"Couldn't upload file! ERROR: {response.content}"
-                        )
-                        writeLogJson(
-                            "uploadFile",
-                            504,
-                            startTime,
-                            f"Couldn't upload file! ERROR: {response.content}",
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {response.content}",
-                        )
 
                 ## if it fails, return an error or start again
                 if not response.ok and response.status_code != 400:
@@ -422,12 +408,12 @@ async def uploadFile(
                     logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
                     writeLogJson(
                         "uploadFile",
-                        400,
+                        response.status_code,
                         startTime,
                         f"Couldn't upload to ARC! ERROR: {response.content}",
                     )
                     raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
+                        status_code=response.status_code,
                         detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                     )
                 else:
@@ -441,8 +427,10 @@ async def uploadFile(
                         f"Couldn't upload to ARC after three tries! ERROR: {response.content}",
                     )
                         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="File "+path+" could not be uploaded! Try again!")
-                    # break the loop if response succeeds
-                    break
+                    
+                    if response.ok:
+                        # break the loop if response succeeds
+                        break
             
             ### end for loop ###
 

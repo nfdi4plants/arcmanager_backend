@@ -186,6 +186,9 @@ async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
 )
 async def createArcJson():
     fullProjects = []
+    currentData = []
+    with open("searchableArcs.json", "r", encoding="utf8") as old:
+        currentData = json.load(old)
 
     def formatTimeString(time: str) -> str:
         parts = time.split("T")
@@ -195,6 +198,11 @@ async def createArcJson():
         time = parts[1].split(".")[0]
 
         return date + " " + time
+
+    def findArc(arc: Projects, searchList: list[Projects]) -> Projects:
+        for entry in searchList:
+            if arc.id == entry["id"] and arc.name == entry["name"]:
+                return entry
 
     data: list[Projects] = []
     for datahub in ["Freiburg", "Plantmicrobe", "Tuebingen"]:
@@ -208,35 +216,40 @@ async def createArcJson():
             data += Projects(projects=json.loads(projects.body)["projects"]).projects
 
         for i, arc in enumerate(data):
-            investData = await getInvestData(arc.id, datahub, arc.default_branch)
+            if arc.last_activity_at.startswith("2024-10"):
 
-            fullProjects.append(
-                {
-                    "datahub": datahub,
-                    "id": arc.id,
-                    "name": arc.name,
-                    "description": arc.description,
-                    "topics": arc.topics,
-                    "author": {
-                        "name": arc.namespace.name,
-                        "username": arc.namespace.full_path,
-                    },
-                    "created_at": formatTimeString(arc.created_at),
-                    "last_activity": formatTimeString(arc.last_activity_at),
-                    "license": await getLicenseData(arc.id, datahub),
-                    "identifier": investData[0],
-                    "url": arc.http_url_to_repo,
-                    "assay_study_relation": await getAssayStudyRel(
-                        arc.id, datahub, arc.default_branch
-                    ),
-                    "contacts": investData[1],
-                    "publications": investData[2],
-                }
-            )
+                investData = await getInvestData(arc.id, datahub, arc.default_branch)
+
+                fullProjects.append(
+                    {
+                        "datahub": datahub,
+                        "id": arc.id,
+                        "name": arc.name,
+                        "description": arc.description,
+                        "topics": arc.topics,
+                        "author": {
+                            "name": arc.namespace.name,
+                            "username": arc.namespace.full_path,
+                        },
+                        "created_at": formatTimeString(arc.created_at),
+                        "last_activity": formatTimeString(arc.last_activity_at),
+                        "license": await getLicenseData(arc.id, datahub),
+                        "identifier": investData[0],
+                        "url": arc.http_url_to_repo,
+                        "assay_study_relation": await getAssayStudyRel(
+                            arc.id, datahub, arc.default_branch
+                        ),
+                        "contacts": investData[1],
+                        "publications": investData[2],
+                    }
+                )
+            else:
+                fullProjects.append(findArc(arc, currentData))
 
     with open("searchableArcs.json", "w", encoding="utf8") as f:
         json.dump(fullProjects, f, ensure_ascii=False)
     f.close()
+    old.close()
     return fullProjects
 
 

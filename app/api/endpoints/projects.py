@@ -413,16 +413,16 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
             try:
                 error = arcsJson["error"]
                 errorDescription = arcsJson["error_description"]
-                
+
             except:
                 raise HTTPException(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
             raise HTTPException(
-                                status_code=arcs.status_code,
-                                detail=error + ", " + errorDescription,
-                            )
+                status_code=arcs.status_code,
+                detail=error + ", " + errorDescription,
+            )
         try:
             pages = int(arcs.headers["X-Total-Pages"])
 
@@ -707,9 +707,14 @@ async def arc_file(
             startTime,
             f"File not found! Path: {path}",
         )
+        if fileHead.status_code == 401:
+            raise HTTPException(
+                status_code=fileHead.status_code,
+                detail=f"{path.split('/')[-1]} not accessible! Error: Not authorized to view the file! Please login again!",
+            )
         raise HTTPException(
             status_code=fileHead.status_code,
-            detail=f"File not found! Error: {fileHead.status_code}, Try to log-in again!",
+            detail=f"{path.split('/')[-1]} not found! Error: {fileHead.status_code}!",
         )
 
     fileSize = fileHead.headers["X-Gitlab-Size"]
