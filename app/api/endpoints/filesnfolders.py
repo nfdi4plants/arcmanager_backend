@@ -419,167 +419,182 @@ async def uploadFile(
                 else:
                     # return exception if upload failed after 3 tries
                     if x >= 2 and response.status_code == 400:
-                        logging.error("File "+path+" failed to upload after three tries! ERROR: "+{response.content})
+                        logging.error(
+                            "File "
+                            + path
+                            + " failed to upload after three tries! ERROR: "
+                            + {response.content}
+                        )
                         writeLogJson(
-                        "uploadFile",
-                        500,
-                        startTime,
-                        f"Couldn't upload to ARC after three tries! ERROR: {response.content}",
-                    )
-                        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="File "+path+" could not be uploaded! Try again!")
-                    
+                            "uploadFile",
+                            500,
+                            startTime,
+                            f"Couldn't upload to ARC after three tries! ERROR: {response.content}",
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="File "
+                            + path
+                            + " could not be uploaded! Try again!",
+                        )
+
                     if response.ok:
                         # break the loop if response succeeds
                         break
-            
+
             ### end for loop ###
-
-
 
             logging.debug("Uploading pointer file to repo...")
             # logging
             logging.info(
-                f"Uploaded new File {name} to repo {id} on path: {path} with LFS. Size: {fileSizeReadable(size)}"
+                f"Uploaded File {name} to repo {id} on path: {path} with LFS. Size: {fileSizeReadable(size)}"
             )
 
-            ## add filename to the gitattributes
-            url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
+            ### loop gitattributes ###
 
-            newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
+            for x in range(5):
+                ## add filename to the gitattributes
+                url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
 
-            try:
-                getResponse = session.get(url, headers=headers)
-            except Exception as e:
-                logging.error(e)
-                writeLogJson("uploadFile", 504, startTime, e)
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail=f"Couldn't upload file to repo! Error: {e}",
-                )
-
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
-
-            # if .gitattributes doesn't exist, create a new one
-            if not getResponse.ok:
-                content = newLine
-
-                attributeData = {
-                    "branch": branch,
-                    "content": content,
-                    "commit_message": "Create .gitattributes",
-                }
+                newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
 
                 try:
-                    response = session.post(
-                        postUrl, headers=headers, data=json.dumps(attributeData)
-                    )
+                    time.sleep(x * 5)
+                    getResponse = session.get(url, headers=headers)
                 except Exception as e:
                     logging.error(e)
                     writeLogJson("uploadFile", 504, startTime, e)
                     raise HTTPException(
                         status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {e}",
+                        detail=f"Couldn't update .gitattributes! Error: {e}",
                     )
 
-                if not response.ok:
+                postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
+
+                # if .gitattributes doesn't exist, create a new one
+                if not getResponse.ok:
+                    content = newLine
+
+                    attributeData = {
+                        "branch": branch,
+                        "content": content,
+                        "commit_message": "Create .gitattributes",
+                    }
+
                     try:
-                        responseJson = response.json()
-                        responseJson["error"] != None
-                    except:
-                        responseJson = {
-                            "error": "Couldn't create .gitattributes",
-                            "error_description": "Couldn't create .gitattributes file in ARC!",
-                        }
-                    logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+                        response = requests.post(
+                            postUrl, headers=headers, data=json.dumps(attributeData)
+                        )
+                    except Exception as e:
+                        logging.error(e)
+                        writeLogJson("uploadFile", 504, startTime, e)
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {e}",
+                        )
+
+                    if not response.ok:
+                        try:
+                            responseJson = response.json()
+                            responseJson["error"] != None
+                        except:
+                            responseJson = {
+                                "error": "Couldn't create .gitattributes",
+                                "error_description": "Couldn't create .gitattributes file in ARC!",
+                            }
+                        logging.error(
+                            f"Couldn't upload to ARC! ERROR: {response.content}"
+                        )
+                        writeLogJson(
+                            "uploadFile",
+                            response.status_code,
+                            startTime,
+                            f"Couldn't upload to ARC! ERROR: {response.content}",
+                        )
+                        raise HTTPException(
+                            status_code=response.status_code,
+                            detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
+                        )
+
+                    logging.debug("Uploading .gitattributes to repo...")
                     writeLogJson(
                         "uploadFile",
-                        response.status_code,
+                        201,
                         startTime,
-                        f"Couldn't upload to ARC! ERROR: {response.content}",
                     )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                    )
-
-                logging.debug("Uploading .gitattributes to repo...")
-                writeLogJson(
-                    "uploadFile",
-                    201,
-                    startTime,
-                )
-                try:
-                    responseJson = response.json()
-                except:
-                    responseJson = {}
-
-                return responseJson
-
-            # if filename is not inside the .gitattributes, add it
-            elif not name in getResponse.text:
-                content = getResponse.text + "\n" + newLine
-
-                attributeData = {
-                    "branch": branch,
-                    "content": content,
-                    "commit_message": "Update .gitattributes",
-                }
-
-                try:
-                    response = session.put(
-                        postUrl, headers=headers, data=json.dumps(attributeData)
-                    )
-                except Exception as e:
-                    logging.error(e)
-                    writeLogJson("uploadFile", 504, startTime, e)
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {e}",
-                    )
-
-                if not response.ok:
                     try:
                         responseJson = response.json()
-                        responseJson["error"] != None
                     except:
-                        responseJson = {
-                            "error": "Couldn't add to .gitattributes",
-                            "error_description": "Couldn't add file to .gitattributes!",
-                        }
-                    logging.error(
-                        f"Couldn't add to .gitattributes! ERROR: {response.content}"
-                    )
+                        responseJson = {}
+
+                    return responseJson
+
+                # if filename is not inside the .gitattributes, add it
+                elif not name in getResponse.text:
+                    content = getResponse.text + "\n" + newLine
+
+                    attributeData = {
+                        "branch": branch,
+                        "content": content,
+                        "commit_message": "Update .gitattributes",
+                    }
+
+                    try:
+                        response = requests.put(
+                            postUrl, headers=headers, data=json.dumps(attributeData)
+                        )
+                    except Exception as e:
+                        logging.error(e)
+                        writeLogJson("uploadFile", 504, startTime, e)
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {e}",
+                        )
+
+                    if not response.ok and response.status_code != 400:
+                        try:
+                            responseJson = response.json()
+                            responseJson["error"] != None
+                        except:
+                            responseJson = {
+                                "error": "Couldn't add to .gitattributes",
+                                "error_description": "Couldn't add file to .gitattributes!",
+                            }
+                        logging.error(
+                            f"Couldn't add to .gitattributes! ERROR: {response.content}"
+                        )
+                        writeLogJson(
+                            "uploadFile",
+                            400,
+                            startTime,
+                            f"Couldn't add to .gitattributes! ERROR: {response.content}",
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Couldn't add file to .gitattributes! Error: {responseJson['error']}, {responseJson['error_description']}",
+                        )
+
+                    elif response.ok:
+                        logging.debug("Updating .gitattributes...")
+                        writeLogJson(
+                            "uploadFile",
+                            201,
+                            startTime,
+                        )
+                        try:
+                            responseJson = response.json()
+                        except:
+                            responseJson = {}
+
+                        return responseJson
+                # if filename already exists, do nothing and just return "File updated"
+                else:
                     writeLogJson(
                         "uploadFile",
-                        400,
+                        200,
                         startTime,
-                        f"Couldn't add to .gitattributes! ERROR: {response.content}",
                     )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Couldn't add file to .gitattributes! Error: {responseJson['error']}, {responseJson['error_description']}",
-                    )
-
-                logging.debug("Updating .gitattributes...")
-                writeLogJson(
-                    "uploadFile",
-                    201,
-                    startTime,
-                )
-                try:
-                    responseJson = response.json()
-                except:
-                    responseJson = {}
-
-                return responseJson
-            # if filename already exists, do nothing and just return "File updated"
-            else:
-                writeLogJson(
-                    "uploadFile",
-                    200,
-                    startTime,
-                )
-                return "File updated"
+                    return "File updated"
 
         # if its a regular upload without git-lfs
         else:
