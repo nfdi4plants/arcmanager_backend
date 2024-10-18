@@ -21,9 +21,9 @@ import time
 import datetime
 
 from app.models.gitlab.arc import Arc
-
 from app.api.endpoints.projects import (
     arc_file,
+    commitFile,
     arc_path,
     arc_tree,
     getAssays,
@@ -127,10 +127,24 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
             )
         # add the results of the investigation validation to the valid dict
         valid["investigation"] = await validateInvestigation(request, id, data)
+        # count passed criteria and add to valid dict
+        valid["summary"] = countCritPassed(valid["investigation"])
+
+    # create and commit output file
+    # TODO: refine text output and HTTP response handling
+    path = "validation_output.txt"
+    pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
+    with open(pathName, 'w') as f:
+        f.write(json.dumps(valid,indent=2))
+
+    # TODO: commit is broken, currently results only in backend save
+    # response = await commitFile(request, id, path, data, pathName, message=name)
 
     # save the response time and return the dict to the user
     writeLogJson("validateArc", 200, startTime)
     return valid
+
+    
 
 
 # validate the investigation file
@@ -154,25 +168,29 @@ async def validateInvestigation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No isa.investigation.xlsx found! ARC is not valid!",
         )
-    # a first structure to check the 5 basic investigation identifier
+    # a first structure to check basic investigation fields
     investSection: dict[str, bool] = {
-        # here we check if the identifier field is filled out with a valid string
+        # here we check for ARC specific fields
         "identifier": type(getField(investigation, "Investigation Identifier")[1])
         == str,
         "title": type(getField(investigation, "Investigation Title")[1]) == str,
         "description": type(getField(investigation, "Investigation Description")[1])
         == str,
-        # here we check if the submission date field is filled out with an ISO 8601 formatted date string
+        # here we check if the date fields and if they're filled out with an ISO 8601 formatted date string
         "submission": valiDate(
             getField(investigation, "Investigation Submission Date")[1]
         ),
         "public": valiDate(
             getField(investigation, "Investigation Public Release Date")[1]
         ),
+        # here we check for person specific information and if they're filled out with valid strings
         "affiliation": type(getField(investigation, "Investigation Person Affiliation")[1]) 
         == str,
         "email": validMail(
             getField(investigation, "Investigation Person Email")[1]
+        ),
+        "orcid": validORICD(
+            getField(investigation, "Comment")[1]
         ),
     }
     writeLogJson("validateInvest", 200, startTime)
@@ -242,7 +260,32 @@ def valiDate(date: str) -> bool:
 # validates an email address
 def validMail(email: str) -> bool:
     try:
-        re.match(r"[^@]+@[^@]+\.[^@]+", email)
+        if re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            return True
+        else:
+            return False
     except:
         return False
-    return True
+
+# validates an ORICD by number of digits and dashes. VERY BASIC!
+# TODO: Check an actual ORCID db --> Could lead to performance drop
+def validORICD(orcid: str) -> bool:
+    try:
+        if re.match(r"\d{4}-\d{4}-\d{4}-\d{4}", orcid):
+            return True
+        else:
+            return False
+    except:
+        return False
+
+# counts how many investigation criteria were passed
+# Note: By seperating this from 'validateInvestigation' it can be re-used and is idempotent to added/deleted criteria
+# TODO: Refine and allow iteration over several dicts
+def countCritPassed(criteria_dict) -> str:
+    passed_criteria = 0
+    total_criteria = len(criteria_dict.keys())
+    for criterium in criteria_dict.values():
+        if criterium:
+            passed_criteria += 1
+    
+    return f"{passed_criteria}/{total_criteria} of criteria were passed!"
