@@ -190,7 +190,7 @@ async def validateInvestigation(
             getField(investigation, "Investigation Person Email")[1]
         ),
         "orcid": validORICD(
-            getField(investigation, "Comment")[1]
+            getField(investigation, "Comment[ORCID]")[1]
         ),
     }
     writeLogJson("validateInvest", 200, startTime)
