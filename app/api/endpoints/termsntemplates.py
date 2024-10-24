@@ -27,7 +27,7 @@ router = APIRouter()
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     format="%(asctime)s-%(levelname)s-%(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
     level=logging.DEBUG,
@@ -48,6 +48,11 @@ async def getTemplates() -> Templates:
     )
     try:
         templateJson = request.json()
+    except:
+        templateJson = {}
+
+    # first try the old way to list the templates
+    try:
         templateList = [json.loads(x) for x in templateJson]
 
         # include list of custom templates
@@ -59,11 +64,26 @@ async def getTemplates() -> Templates:
                 data = json.load(f)
                 templateList.append(data)
                 f.close()
+    except:
+        pass
+
+    # if it fails try the new alternative way
+    try:
+        templateList2 = [x for x in json.loads(templateJson)]
+        # include list of custom templates
+        templatePath = os.environ.get("BACKEND_SAVE") + "templates"
+        listOfTemplates = os.listdir(templatePath)
+
+        for entry in listOfTemplates:
+            with open(templatePath + "/" + entry, "r") as f:
+                data = json.load(f)
+                templateList2.append(data)
+                f.close()
 
     except:
         templateJson = {}
 
-    # if swate is down, return error 500
+    # if swate is down, return error
     if not request.ok:
         logging.error(
             f"There was an error retrieving the swate templates! ERROR: {templateJson}"
@@ -75,7 +95,7 @@ async def getTemplates() -> Templates:
             f"There was an error retrieving the swate templates! ERROR: {templateJson}",
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=request.status_code,
             detail="Couldn't receive swate templates",
         )
 
@@ -86,7 +106,10 @@ async def getTemplates() -> Templates:
         startTime,
     )
     # return the templates
-    return Templates(templates=templateList)
+    try:
+        return Templates(templates=templateList)
+    except:
+        return Templates(templates=templateList2)
 
 
 # gets a specific template by its id (from swate) UNUSED
@@ -94,6 +117,7 @@ async def getTemplates() -> Templates:
     "/getTemplate",
     summary="Retrieve the specific template",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def getTemplate(id: str) -> TemplateBB:
     startTime = time.time()
@@ -143,9 +167,9 @@ async def getTemplate(id: str) -> TemplateBB:
 )
 async def getTerms(
     input: str,
-    parentName: str,
-    parentTermAccession: str,
-    advanced=False,
+    parentName: str = "",
+    parentTermAccession="",
+    advanced=True,
 ) -> Terms:
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
@@ -153,32 +177,20 @@ async def getTerms(
         # if there is an extended search requested, make an advanced search call
         if advanced == "true":
             request = requests.post(
-                "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermsForAdvancedSearch",
-                data=json.dumps(
-                    [
-                        {
-                            "Ontologies": None,
-                            "TermName": input,
-                            "TermDefinition": "",
-                            "KeepObsolete": False,
-                        }
-                    ]
-                ),
+                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerms",
+                data=json.dumps([{"limit": 50, "ontologies": [], "query": input}]),
                 timeout=10,
             )
             logging.debug(f"Getting an extended list of terms for the input '{input}'!")
         else:
             # default is an request call containing the parentTerm values
             request = requests.post(
-                "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getTermSuggestionsByParentTerm",
+                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTermsByParent",
                 data=json.dumps(
                     [
                         {
-                            "n": 20,
-                            "parent_term": {
-                                "Name": parentName,
-                                "TermAccession": parentTermAccession,
-                            },
+                            "limit": 50,
+                            "parentTAN": parentTermAccession,
                             "query": input,
                         }
                     ]
@@ -249,7 +261,7 @@ async def getTermSuggestionsByParentTerm(
     try:
         # default is an request call containing the parentTerm values
         request = requests.post(
-            "https://swate.nfdi4plants.org/api/IOntologyAPIv2/getAllTermsByParentTerm",
+            "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv2/getAllTermsByParentTerm",
             data=json.dumps(
                 [
                     {
@@ -314,6 +326,7 @@ async def getTermSuggestionsByParentTerm(
     return output
 
 
+## UNUSED
 @router.get(
     "/getTermSuggestions",
     summary="Retrieve Term suggestions by given input",
@@ -406,6 +419,7 @@ async def saveSheet(
         path = content.path
         projectId = content.id
         name = content.name
+        branch = content.branch
 
     # if there are either the name or the accession missing, return error 400
     except:
@@ -433,8 +447,12 @@ async def saveSheet(
     # add the new sheet to the file
     createSheet(content, target)
 
+    name = name.replace(" ", "_")
+
     # send the edited file back to gitlab
-    response = await commitFile(request, projectId, path, data, pathName, message=name)
+    response = await commitFile(
+        request, projectId, path, data, pathName, message=name, branch=branch
+    )
     writeLogJson("saveSheet", 200, startTime)
     return str(response)
 

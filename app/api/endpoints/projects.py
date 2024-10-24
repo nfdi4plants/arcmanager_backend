@@ -1,17 +1,13 @@
 from typing import Annotated
 from fastapi import (
     APIRouter,
-    Body,
     Cookie,
-    File,
-    Form,
     HTTPException,
     status,
     Response,
     Request,
-    Header,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.encoders import jsonable_encoder
 
 # gitlab api commits need base64 encoded content
@@ -20,6 +16,8 @@ import base64
 import json
 import os
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 import jwt
 
 from starlette.status import (
@@ -31,14 +29,19 @@ from starlette.status import (
 import logging
 import time
 
+from cryptography.fernet import Fernet
+from app.models.gitlab.file import FileContent
+from pdf2image import convert_from_bytes  # type: ignore
+
 # paths in get requests need to be parsed to uri encoded strings
 from urllib.parse import quote
+from io import BytesIO
 
 # functions to read and write isa files
 from app.api.IO.excelIO import (
+    getIsaType,
     readExcelFile,
     readIsaFile,
-    getIsaType,
     writeIsaFile,
     appendAssay,
     appendStudy,
@@ -46,34 +49,55 @@ from app.api.IO.excelIO import (
 
 from app.models.gitlab.input import (
     arcContent,
-    folderContent,
-    newIsa,
+    datamapContent,
     isaContent,
+    newIsa,
     syncAssayContent,
     syncStudyContent,
 )
 from app.models.gitlab.projects import Projects
 from app.models.gitlab.arc import Arc
-from app.models.gitlab.commit import Commit
-from app.models.gitlab.file import FileContent
-
-import hashlib
-import tempfile
 
 router = APIRouter()
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     format="%(asctime)s-%(levelname)s-%(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
     level=logging.DEBUG,
 )
 
+logging.getLogger("multipart").setLevel(logging.INFO)
+
+# request sessions to retry the important requests
+retry = Retry(
+    total=5,
+    backoff_factor=4,
+    status_forcelist=[500, 502, 429, 503, 504],
+    allowed_methods=["POST", "PUT", "HEAD"],
+)
+
+adapter = HTTPAdapter(max_retries=retry)
+
+session = requests.Session()
+session.mount("https://", adapter)
+session.mount("http://", adapter)
+
+
+# sanitize input
+def sanitizeInput(input: str | list) -> str:
+    if type(input) is list:
+        return [sanitizeInput(entry) for entry in input]
+
+    if type(input) is str:
+        return input.replace("<", "&lt;").replace(">", "&gt;")
+    return input
+
 
 # Match the given target repo with the address name in the env file (default is the gitlab dev server)
 def getTarget(target: str) -> str:
-    match target:
+    match target.lower():
         case "dev":
             return "GITLAB_ADDRESS"
         case "freiburg":
@@ -84,8 +108,10 @@ def getTarget(target: str) -> str:
             return "GITLAB_PLANTMICROBE"
         case "tuebingen":
             return "GITLAB_TUEBINGEN"
+        case "tuebingen_testenv":
+            return "GITLAB_TUEBINGEN_TESTENV"
         case other:
-            return "GITLAB_ADDRESS"
+            return "GITLAB_TUEBINGEN"
 
 
 # get the username using the id
@@ -108,7 +134,15 @@ def getData(cookie: str):
         + b"\n-----END PUBLIC KEY-----"
     )
 
-    return jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
+    decodedToken = jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
+    fernetKey = os.environ.get("FERNET").encode()
+    try:
+        decodedToken["gitlab"] = (
+            Fernet(fernetKey).decrypt(decodedToken["gitlab"].encode()).decode()
+        )
+    except:
+        pass
+    return decodedToken
 
 
 # writes the log entry into the json log file
@@ -121,7 +155,7 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
             {
                 "endpoint": endpoint,
                 "status": status,
-                "error": error,
+                "error": str(error),
                 "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
                 "response_time": time.time() - startTime,
             }
@@ -131,6 +165,15 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
             json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
     except:
         logging.warning("Error while logging to log json!")
+
+
+# converts bit size into human readable byte size
+def fileSizeReadable(size: int) -> str:
+    for unit in ("bytes", "Kb", "Mb", "Gb"):
+        if abs(size) < 1024.0:
+            return f"{size:3.1f} {unit}"
+        size /= 1024.0
+    return f"{size} Bits"
 
 
 # get a list of all arcs accessible to the user
@@ -166,10 +209,18 @@ async def list_arcs(
 
     if owned == "true":
         # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
-        arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?min_access_level=30&page={page}",
-            headers=header,
-        )
+        try:
+            arcs = session.get(
+                f"{os.environ.get(target)}/api/v4/projects?min_access_level=30&page={page}",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("arc_list", 504, startTime, e)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Couldn't retrieve list of ARCs! Error: {e}",
+            )
         # if there is an error retrieving the content
         if not arcs.ok:
             logging.warning(arcs.content)
@@ -180,19 +231,19 @@ async def list_arcs(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
-            try:
-                message = arcsJson["message"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=message,
-                )
-            except:
-                error = arcsJson["error"]
-                raise HTTPException(
-                    status_code=arcs.status_code,
-                    detail=error + ", " + arcsJson["error_description"],
-                )
 
+            try:
+                error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail=str(arcsJson),
+                )
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=error + ", " + errorDescription,
+            )
         try:
             arcList = arcs.json()
             pages = int(arcs.headers["X-Total-Pages"])
@@ -211,10 +262,18 @@ async def list_arcs(
 
     # same procedure, but for general available arcs, not just private ones (more likely to be more than 100)
     else:
-        arcs = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?page={page}",
-            headers=header,
-        )
+        try:
+            arcs = session.get(
+                f"{os.environ.get(target)}/api/v4/projects?page={page}",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("arc_list", 504, startTime, e)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Couldn't retrieve list of ARCs! Error: {e}",
+            )
         if not arcs.ok:
             logging.warning(arcs.content)
             try:
@@ -224,10 +283,18 @@ async def list_arcs(
                     status_code=arcs.status_code,
                     detail="Error retrieving the ARCs! Please login again!",
                 )
-            error = arcsJson["error"]
+            try:
+                error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
+
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
             raise HTTPException(
                 status_code=arcs.status_code,
-                detail=error + ", " + arcsJson["error_description"],
+                detail=error + ", " + errorDescription,
             )
 
         try:
@@ -257,6 +324,130 @@ async def list_arcs(
     )
 
 
+# head request option for arc_list, so that you only receive the number of pages
+@router.head(
+    "/arc_list",
+    summary="Just sends the headers containing the pages count",
+    include_in_schema=False,
+)
+async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned=False):
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "arc_list_head",
+            401,
+            startTime,
+            f"Client connected with no valid cookies/Client is not logged in.",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not logged in",
+        )
+
+    if owned == "true":
+        # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
+        arcs = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects?min_access_level=30",
+            headers=header,
+        )
+        # if there is an error retrieving the content
+        if not arcs.ok:
+            try:
+                arcsJson = arcs.json()
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+
+            try:
+                error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
+
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=error + ", " + errorDescription,
+            )
+
+        try:
+            pages = int(arcs.headers["X-Total-Pages"])
+            # if there is an error parsing the data to json, throw an exception
+        except:
+            writeLogJson(
+                "arc_list",
+                500,
+                startTime,
+                f"Error while parsing the list of ARCs!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error while parsing the list of ARCs!",
+            )
+
+    # same procedure, but for general available arcs, not just private ones (more likely to be more than 100)
+    else:
+        arcs = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects",
+            headers=header,
+        )
+        if not arcs.ok:
+            try:
+                arcsJson = arcs.json()
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+            try:
+                error = arcsJson["error"]
+                errorDescription = arcsJson["error_description"]
+
+            except:
+                raise HTTPException(
+                    status_code=arcs.status_code,
+                    detail="Error retrieving the ARCs! Please login again!",
+                )
+            raise HTTPException(
+                status_code=arcs.status_code,
+                detail=error + ", " + errorDescription,
+            )
+        try:
+            pages = int(arcs.headers["X-Total-Pages"])
+
+        except:
+            writeLogJson(
+                "arc_list_head",
+                500,
+                startTime,
+                f"Error while parsing the list of ARCs!",
+            )
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error while parsing the list of ARCs!",
+            )
+
+    logging.info("Sent list of Arc list headers")
+    writeLogJson("arc_list_head", 200, startTime)
+    return Response(
+        headers={
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        },
+    )
+
+
 # get a list of all public arcs
 @router.get(
     "/public_arcs", summary="Lists all public ARCs", status_code=status.HTTP_200_OK
@@ -279,8 +470,11 @@ async def public_arcs(target: str, page=1) -> Projects:
     try:
         # if the requested gitlab is not available after 30s, return error 504
         request = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects?page={page}", timeout=30
+            f"{os.environ.get(target)}/api/v4/projects?page={page}",
+            timeout=30,
         )
+        if request.status_code == 502:
+            raise Exception()
     except:
         writeLogJson(
             "public_arcs",
@@ -292,6 +486,7 @@ async def public_arcs(target: str, page=1) -> Projects:
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="DataHUB currently not available!!",
         )
+
     try:
         requestJson = request.json()
         pages = int(request.headers["X-Total-Pages"])
@@ -332,7 +527,9 @@ async def public_arcs(target: str, page=1) -> Projects:
 
 # get the frontpage tree structure of the arc
 @router.get("/arc_tree", summary="Overview of the ARC", status_code=status.HTTP_200_OK)
-async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) -> Arc:
+async def arc_tree(
+    id: int, data: Annotated[str, Cookie()], request: Request, branch="main"
+) -> Arc:
     startTime = time.time()
     try:
         token = getData(data)
@@ -354,7 +551,7 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
         )
 
     arc = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&ref={branch}",
         headers=header,
     )
     try:
@@ -392,7 +589,12 @@ async def arc_tree(id: int, data: Annotated[str, Cookie()], request: Request) ->
     "/arc_path", summary="Subdirectory of the ARC", status_code=status.HTTP_200_OK
 )
 async def arc_path(
-    id: int, request: Request, path: str, data: Annotated[str, Cookie()], page=1
+    id: int,
+    request: Request,
+    path: str,
+    data: Annotated[str, Cookie()],
+    page=1,
+    branch="main",
 ) -> Arc:
     startTime = time.time()
     try:
@@ -413,10 +615,19 @@ async def arc_path(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="You are not authorized to view this ARC",
         )
-    arcPath = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=50&path={path}&page={page}",
-        headers=header,
-    )
+
+    try:
+        arcPath = session.get(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&page={page}&ref={branch}",
+            headers=header,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("arc_path", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't retrieve content of the path! Error: {e}",
+        )
 
     try:
         pathJson = arcPath.json()
@@ -492,24 +703,52 @@ async def arc_file(
         logging.error(f"File not found! Path: {path}")
         writeLogJson(
             "arc_file",
-            404,
+            fileHead.status_code,
             startTime,
             f"File not found! Path: {path}",
         )
+        if fileHead.status_code == 401:
+            raise HTTPException(
+                status_code=fileHead.status_code,
+                detail=f"{path.split('/')[-1]} not accessible! Error: Not authorized to view the file! Please login again!",
+            )
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found! Error: {fileHead.status_code}, Try to log-in again!",
+            status_code=fileHead.status_code,
+            detail=f"{path.split('/')[-1]} not found! Error: {fileHead.status_code}!",
         )
 
     fileSize = fileHead.headers["X-Gitlab-Size"]
 
+    altRetry = Retry(
+        total=5,
+        backoff_factor=4,
+        status_forcelist=[500, 400, 502, 429, 503, 504, 404],
+        allowed_methods=["POST", "PUT", "HEAD"],
+    )
+
+    altAdapter = HTTPAdapter(max_retries=altRetry)
+
+    altSession = requests.Session()
+
+    altSession.mount("https://", altAdapter)
+    altSession.mount("http://", altAdapter)
+
     # if its a isa file, return the content of the file as json to the frontend
     if getIsaType(path) != "":
-        # get the raw ISA file
-        fileRaw = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
-            headers=header,
-        ).content
+
+        try:
+            # get the raw ISA file
+            fileRaw = altSession.get(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}/raw?ref={branch}",
+                headers=header,
+            ).content
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("arc_file", 504, startTime, e)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"File not found! Error: {e}, Try to log-in again!",
+            )
 
         # construct path to save on the backend
         pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
@@ -526,12 +765,14 @@ async def arc_file(
 
         logging.info(f"Sent ISA file {path} from ID: {id}")
         writeLogJson("arc_file", 200, startTime)
+        if getIsaType(path) == "datamap":
+            return fileJson
         return fileJson["data"]
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
         # if file is too big, skip requesting it
-        if int(fileSize) > 10000000:
-            logging.warning("File too large! Size: " + fileSize)
+        if int(fileSize) > 50000000:
+            logging.warning("File too large! Size: " + fileSizeReadable(int(fileSize)))
             writeLogJson(
                 "arc_file",
                 413,
@@ -540,13 +781,23 @@ async def arc_file(
             )
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File too large! (over 10 MB)",
+                detail="File too large! (over 50 MB)",
             )
-        # get the file metadata
-        arcFile = requests.get(
-            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-            headers=header,
-        )
+
+        try:
+            # get the file metadata
+            arcFile = altSession.get(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("arc_file", 504, startTime, e)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"File not found! Error: {e}, Try to log-in again!",
+            )
+
         logging.info(f"Sent info of {path} from ID: {id}")
         try:
             arcFileJson = arcFile.json()
@@ -562,10 +813,13 @@ async def arc_file(
                 detail=f"Error while retrieving the content of the file!",
             )
 
-        if path.endswith((".txt", ".md", ".html", ".xml")):
+        if path.lower().endswith((".txt", ".md", ".html", ".xml")):
             # sanitize content
             # decode the file
-            decoded = base64.b64decode(arcFileJson["content"]).decode("utf-8")
+
+            decoded = base64.b64decode(arcFileJson["content"]).decode(
+                "utf-8", "replace"
+            )
 
             # remove script and iframe tags
             decoded = decoded.replace("<script>", "---here was a script tag---")
@@ -581,9 +835,57 @@ async def arc_file(
             fileJson["content"] = encoded
             writeLogJson("arc_file", 200, startTime)
             return fileJson
-        elif path.endswith(".xlsx"):
+        elif path.lower().endswith(".xlsx"):
             decoded = base64.b64decode(arcFileJson["content"])
             return readExcelFile(decoded)
+        # if its a pdf, return a html file containing the pdf as images
+        elif path.lower().endswith(".pdf"):
+            fileName = arcFileJson["file_name"]
+            html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                <title>{fileName}</title>
+                <style>
+                img {{
+                    display: block;
+                    margin-left: auto;
+                    margin-right: auto;
+                    margin-bottom: 1em;
+                    width: 100%;
+                    }}
+                </style>
+                </head>
+                <body>
+                """
+
+            decoded = base64.b64decode(arcFileJson["content"])
+            try:
+                images = convert_from_bytes(
+                    decoded,
+                    # remove for linux
+                    poppler_path=os.environ.get("BACKEND_SAVE") + "poppler/bin",
+                )
+            except:
+                writeLogJson(
+                    "arc_file",
+                    500,
+                    startTime,
+                    "File is not a valid pdf or stored as LFS!",
+                )
+                raise HTTPException(
+                    status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="File is not a supported pdf file or stored as LFS!",
+                )
+            for img in images:
+                buffered = BytesIO()
+                img.save(buffered, format="JPEG")
+                html += f"<img src='data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}' />"
+
+            html += "</body></html>"
+            logging.info(f"Sent pdf {fileName} from ID: {id}")
+            writeLogJson("arc_file", 200, startTime)
+            return HTMLResponse(html)
         else:
             writeLogJson("arc_file", 200, startTime)
             return arcFileJson
@@ -596,6 +898,7 @@ async def saveFile(
 ):
     startTime = time.time()
     try:
+        isaContent.isaInput = sanitizeInput(isaContent.isaInput)
         token = getData(data)
         target = token["target"]
     except:
@@ -675,7 +978,7 @@ async def saveFile(
 async def commitFile(
     request: Request,
     id: int,
-    repoPath,
+    repoPath: str,
     data: Annotated[str, Cookie()],
     filePath="",
     branch="main",
@@ -708,7 +1011,7 @@ async def commitFile(
     commitMessage = "Updated " + repoPath
 
     if message != "":
-        commitMessage += ", changed " + message
+        commitMessage += ", changed " + sanitizeInput(message)
 
     header = {
         "Authorization": "Bearer " + token["gitlab"],
@@ -735,27 +1038,35 @@ async def commitFile(
             "commit_message": commitMessage,
         }
 
-    request = requests.put(
-        f"{os.environ.get(getTarget(targetRepo))}/api/v4/projects/{id}/repository/files/{quote(repoPath, safe='')}",
-        data=json.dumps(payload),
-        headers=header,
-    )
+    try:
+        response = session.put(
+            f"{os.environ.get(getTarget(targetRepo))}/api/v4/projects/{id}/repository/files/{quote(repoPath, safe='')}",
+            data=json.dumps(payload),
+            headers=header,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("commitFile", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't upload data to the ARC! Error: {e}",
+        )
 
-    if not request.ok:
-        logging.error(f"Couldn't commit to ARC! ERROR: {request.content}")
+    if not response.ok:
+        logging.error(f"Couldn't commit to ARC! ERROR: {response.content}")
         writeLogJson(
             "commitFile",
             400,
             startTime,
-            f"Couldn't commit to ARC! ERROR: {request.content}",
+            f"Couldn't commit to ARC! ERROR: {response.content}",
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Couldn't commit file to repo! Error: {request.content}",
+            detail=f"Couldn't commit file to repo! Error: {response.content}",
         )
     logging.info(f"Updated file on path: {repoPath}")
     writeLogJson("commitFile", 200, startTime)
-    return request.content
+    return response.content
 
 
 # creates a new project in the repo with a readme file; we then initialize the repo folder on the server with the new id of the ARC;
@@ -790,9 +1101,9 @@ async def createArc(
         )
     # read out the new arc properties
     try:
-        name = arcContent.name
-        description = arcContent.description
-        investIdentifier = arcContent.investIdentifier
+        name = sanitizeInput(arcContent.name)
+        description = sanitizeInput(arcContent.description)
+        investIdentifier = sanitizeInput(arcContent.investIdentifier)
     except:
         logging.error(f"Missing content for arc creation! Data: {arcContent}")
         raise HTTPException(
@@ -808,11 +1119,24 @@ async def createArc(
         "visibility": "private",
     }
 
-    projectPost = requests.post(
-        os.environ.get(target) + "/api/v4/projects",
-        headers=header,
-        data=json.dumps(project),
-    )
+    # add arc to group, if it is requested
+    if arcContent.groupId != None:
+        project["namespace_id"] = arcContent.groupId
+
+    try:
+        projectPost = session.post(
+            os.environ.get(target) + "/api/v4/projects",
+            headers=header,
+            data=json.dumps(project),
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("createArc", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't upload file to repo! Error: {e}",
+        )
+
     if not projectPost.ok:
         logging.error(f"Couldn't create new ARC! ERROR: {projectPost.content}")
         writeLogJson(
@@ -909,9 +1233,200 @@ async def createArc(
         }
     )
     logging.debug(f"Sent commit request to repo with payload {payload}")
+    try:
+        # send the data to the repo
+        commitRequest = session.post(
+            f"{os.environ.get(target)}/api/v4/projects/{newArcJson['id']}/repository/commits",
+            headers=header,
+            data=payload,
+        )
+    except:
+        logging.error(f"Couldn't upload content to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Couldn't upload content to ARC! ERROR: {commitRequest.content}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Couldn't upload content to new ARC! Error: {commitRequest.content}",
+        )
+
+    if not commitRequest.ok:
+        logging.error(f"Couldn't upload content to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "createArc",
+            500,
+            startTime,
+            f"Couldn't upload content to ARC! ERROR: {commitRequest.content}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Couldn't upload content to new ARC! Error: {commitRequest.content}",
+        )
+    else:
+        logging.info(f"Created new ARC with ID: {newArcJson['id']}")
+
+        # write identifier into investigation file
+        await arc_file(
+            id=newArcJson["id"],
+            path="isa.investigation.xlsx",
+            request=request,
+            data=data,
+            branch=newArcJson["default_branch"],
+        )
+        # fill in the identifier, name and description of the arc into the investigation file
+        writeIsaFile(
+            path="isa.investigation.xlsx",
+            type="investigation",
+            newContent=["Investigation Identifier", investIdentifier],
+            repoId=newArcJson["id"],
+            location=token["target"],
+        )
+        writeIsaFile(
+            path="isa.investigation.xlsx",
+            type="investigation",
+            newContent=["Investigation Title", name],
+            repoId=newArcJson["id"],
+            location=token["target"],
+        )
+        writeIsaFile(
+            path="isa.investigation.xlsx",
+            type="investigation",
+            newContent=["Investigation Description", description],
+            repoId=newArcJson["id"],
+            location=token["target"],
+        )
+
+        await commitFile(
+            request=request,
+            id=newArcJson["id"],
+            repoPath="isa.investigation.xlsx",
+            data=data,
+            filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
+            branch=newArcJson["default_branch"],
+        )
+        writeLogJson("createArc", 201, startTime)
+    return [projectPost.content, commitRequest.content]
+
+
+@router.post(
+    "/repairArc",
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+    summary="Repairs an arc that was created with just a readme file",
+)
+async def repairArc(
+    request: Request,
+    data: Annotated[str, Cookie()],
+    arcContent: arcContent,
+    id: int,
+    branch="main",
+):
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {
+            "Authorization": "Bearer " + token["gitlab"],
+            "Content-Type": "application/json",
+        }
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client not logged in for ARC creation! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "createArc",
+            401,
+            startTime,
+            f"Client not logged in for ARC creation!",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Please login to create a new ARC",
+        )
+
+    # read out the new arc properties
+    try:
+        name = sanitizeInput(arcContent.name)
+        description = sanitizeInput(arcContent.description)
+        investIdentifier = sanitizeInput(arcContent.investIdentifier)
+    except:
+        logging.error(f"Missing content for arc creation! Data: {arcContent}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing content for arc creation!",
+        )
+
+    # replace empty space with underscores
+    investIdentifier = investIdentifier.replace(" ", "_")
+
+    ## commit the folders and the investigation isa to the repo
+
+    # fill the payload with all the files and folders
+    arcData = [
+        {
+            "action": "create",
+            "file_path": "isa.investigation.xlsx",
+            "content": base64.b64encode(
+                open(
+                    f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.investigation.xlsx",
+                    "rb",
+                ).read()
+            ).decode("utf-8"),
+            "encoding": "base64",
+        },
+        {
+            "action": "create",
+            "file_path": ".arc/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "assays/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "runs/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "studies/.gitkeep",
+            "content": None,
+        },
+        {
+            "action": "create",
+            "file_path": "workflows/.gitkeep",
+            "content": None,
+        },
+    ]
+
+    # the arc.cwl
+    # currently disabled, as an cwl is no longer required
+    """
+    arcData.append(
+        {
+            "action": "create",
+            "file_path": "arc.cwl",
+            "content": None,
+        }
+    )
+    """
+    # wrap the payload into json
+    payload = json.dumps(
+        {
+            "branch": branch,
+            "commit_message": "Initial commit of the arc structure",
+            "actions": arcData,
+        }
+    )
+    logging.debug(f"Sent commit request to repo with payload {payload}")
     # send the data to the repo
     commitRequest = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{newArcJson['id']}/repository/commits",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
         headers=header,
         data=payload,
     )
@@ -929,49 +1444,49 @@ async def createArc(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Couldn't commit the arc to the repo! Error: {commitRequest.content}",
         )
-    logging.info(f"Created new ARC with ID: {newArcJson['id']}")
+    logging.info(f"Created new ARC with ID: {id}")
 
     # write identifier into investigation file
     await arc_file(
-        id=newArcJson["id"],
+        id=id,
         path="isa.investigation.xlsx",
         request=request,
         data=data,
-        branch=newArcJson["default_branch"],
+        branch=branch,
     )
     # fill in the identifier, name and description of the arc into the investigation file
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Identifier", investIdentifier],
-        repoId=newArcJson["id"],
+        repoId=id,
         location=token["target"],
     )
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Title", name],
-        repoId=newArcJson["id"],
+        repoId=id,
         location=token["target"],
     )
     writeIsaFile(
         path="isa.investigation.xlsx",
         type="investigation",
         newContent=["Investigation Description", description],
-        repoId=newArcJson["id"],
+        repoId=id,
         location=token["target"],
     )
 
     await commitFile(
         request=request,
-        id=newArcJson["id"],
+        id=id,
         repoPath="isa.investigation.xlsx",
         data=data,
-        filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
-        branch=newArcJson["default_branch"],
+        filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/isa.investigation.xlsx",
+        branch=branch,
     )
-    writeLogJson("createArc", 201, startTime)
-    return [projectPost.content, commitRequest.content]
+
+    return commitRequest.content
 
 
 # here we create a assay or study structure and push it to the repo
@@ -1007,9 +1522,9 @@ async def createIsa(
 
     # load the isa properties
     try:
-        identifier = isaContent.identifier
+        identifier = sanitizeInput(isaContent.identifier)
         id = isaContent.id
-        type = isaContent.type
+        type = sanitizeInput(isaContent.type)
         branch = isaContent.branch
     except:
         logging.error(f"Missing Properties for isa! Data: {isaContent}")
@@ -1105,12 +1620,21 @@ async def createIsa(
         }
     )
     logging.debug("Sent commit request with payload " + str(payload))
+
     # send the data to the repo
-    commitRequest = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
-        headers=header,
-        data=payload,
-    )
+    try:
+        commitRequest = session.post(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+            headers=header,
+            data=payload,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("createISA", 504, startTime, e)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Couldn't create new ISA! Error: {e}",
+        )
     if not commitRequest.ok:
         logging.error(f"Couldn't commit ISA to ARC! ERROR: {commitRequest.content}")
         writeLogJson(
@@ -1195,370 +1719,15 @@ async def createIsa(
     return commitRequest.content
 
 
-# either caches the given byte chunk or uploads the file directly (merges all the byte chunks as soon as all have been received)
-@router.post(
-    "/uploadFile",
-    summary="Uploads the given file to the repo (with or without lfs)",
-    status_code=status.HTTP_201_CREATED,
-)
-async def uploadFile(
-    request: Request,
-    data: Annotated[str, Cookie()],
-    file: Annotated[bytes, File()],
-    name: Annotated[str, Form()],
-    id: Annotated[int, Form()],
-    branch: Annotated[str, Form()],
-    path: Annotated[str, Form()],
-    namespace: Annotated[str, Form()],
-    lfs: Annotated[str, Form()],
-    chunkNumber: Annotated[int, Form()] = 0,
-    totalChunks: Annotated[int, Form()] = 1,
-) -> Commit | dict | str:
-    startTime = time.time()
-    try:
-        token = getData(data)
-        target = getTarget(token["target"])
-        header = {
-            "Authorization": "Bearer " + token["gitlab"],
-            "Content-Type": "application/json",
-        }
-    except:
-        logging.error(
-            f"uploadFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
-        )
-        writeLogJson(
-            "uploadFile",
-            400,
-            startTime,
-            f"uploadFile Request couldn't be processed! Body: {request.body}",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
-        )
-
-    f = open(
-        os.environ.get("BACKEND_SAVE") + "cache/" + name + "." + str(chunkNumber),
-        "wb",
-    )
-    f.write(file)
-    f.close()
-    # fullData holds the final file data
-    fullData = bytes()
-
-    # if the current chunk is the last chunk, merge all chunks together and write them into fullData
-    if chunkNumber + 1 == totalChunks:
-        for chunk in range(totalChunks):
-            f = open(
-                os.environ.get("BACKEND_SAVE") + "cache/" + name + "." + str(chunk),
-                "rb",
-            )
-            fullData += f.read()
-            f.close()
-
-        # clear the chunks
-        try:
-            for chunk in range(totalChunks):
-                os.remove(os.environ.get("BACKEND_SAVE") + "cache/" + f"{name}.{chunk}")
-        except:
-            pass
-
-        # open up a new hash
-        shasum = hashlib.new("sha256")
-
-        # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
-        if lfs == "true":
-            logging.debug("Uploading file with lfs...")
-
-            # create a new tempfile to store the data
-            tempFile = tempfile.SpooledTemporaryFile(
-                max_size=1024 * 1024 * 100, mode="w+b"
-            )
-
-            # write the data into the hash and tempfile
-            shasum.update(fullData)
-
-            tempFile.write(fullData)
-
-            # jump to file end and read the size
-            tempFile.seek(0, 2)
-
-            size = tempFile.tell()
-
-            # get the hash string
-            sha256 = shasum.hexdigest()
-
-            # build together the lfs upload json and header
-            lfsJson = {
-                "operation": "upload",
-                "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
-                "transfers": ["lfs-standalone-file", "basic"],
-                "ref": {"name": f"refs/heads/{branch}"},
-                "hash_algo": "sha256",
-            }
-
-            lfsHeaders = {
-                "Accept": "application/vnd.git-lfs+json",
-                "Content-type": "application/vnd.git-lfs+json",
-            }
-
-            # construct the download url for the file
-            downloadUrl = "".join(
-                [
-                    "https://oauth2:",
-                    token["gitlab"],
-                    f"@{os.environ.get(target).split('//')[1]}/",
-                    f"{namespace}.git/info/lfs/objects/batch",
-                ]
-            )
-
-            r = requests.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
-
-            logging.debug("Posting download URL...")
-            try:
-                result = r.json()
-            except:
-                writeLogJson(
-                    "uploadFile",
-                    500,
-                    startTime,
-                    f"Error while uploading the file to lfs storage!",
-                )
-                return "Error: There was an error uploading the file. Please re-authorize and try again!"
-
-            # test if there is a change in the file
-            testFail = False
-            try:
-                test = result["objects"][0]["actions"]
-
-            # if the file is the same, there will be no "actions" attribute
-            except:
-                testFail = True
-
-            # if the file is new or includes new content, upload it
-            if not testFail:
-                header_upload = result["objects"][0]["actions"]["upload"]["header"]
-                urlUpload = result["objects"][0]["actions"]["upload"]["href"]
-                header_upload.pop("Transfer-Encoding")
-                tempFile.seek(0, 0)
-                res = requests.put(
-                    urlUpload,
-                    headers=header_upload,
-                    data=iter(lambda: tempFile.read(4096 * 4096), b""),
-                )
-
-            # build and upload the new pointer file to the arc
-            repoPath = quote(path, safe="")
-
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}"
-
-            pointerContent = (
-                f"version https://git-lfs.github.com/spec/v1\n"
-                f"oid sha256:{sha256}\nsize {size}\n"
-            )
-
-            headers = {
-                "Authorization": f"Bearer {token['gitlab']}",
-                "Content-Type": "application/json",
-            }
-
-            jsonData = {
-                "branch": "main",
-                "content": pointerContent,
-                "commit_message": "create a new lfs pointer file",
-            }
-
-            # check if file already exists
-            fileHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
-                headers=header,
-            )
-            if fileHead.ok:
-                response = requests.put(postUrl, headers=headers, json=jsonData)
-            else:
-                response = requests.post(postUrl, headers=headers, json=jsonData)
-
-            if not response.ok:
-                try:
-                    responseJson = response.json()
-                    responseJson["error"] != None
-                except:
-                    responseJson = {
-                        "error": "Couldn't upload file",
-                        "error_description": "Couldn't upload pointer file to the ARC!",
-                    }
-                logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
-                writeLogJson(
-                    "uploadFile",
-                    400,
-                    startTime,
-                    f"Couldn't upload to ARC! ERROR: {response.content}",
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                )
-
-            logging.debug("Uploading pointer file to repo...")
-            # logging
-            logging.info(
-                f"Uploaded new File {name} to repo {id} on path: {branch} with LFS"
-            )
-
-            ## add filename to the gitattributes
-            url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
-
-            newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
-
-            getResponse = requests.get(url, headers=headers)
-
-            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
-
-            # if .gitattributes doesn't exist, create a new one
-            if not getResponse.ok:
-                content = newLine
-
-                attributeData = {
-                    "branch": branch,
-                    "content": content,
-                    "commit_message": "Create .gitattributes",
-                }
-                response = requests.post(
-                    postUrl, headers=headers, data=json.dumps(attributeData)
-                )
-                logging.debug("Uploading .gitattributes to repo...")
-                writeLogJson(
-                    "uploadFile",
-                    200,
-                    startTime,
-                )
-                try:
-                    responseJson = response.json()
-                except:
-                    responseJson = {}
-
-                return responseJson
-
-            # if filename is not inside the .gitattributes, add it
-            elif not name in getResponse.text:
-                content = getResponse.text + "\n" + newLine
-
-                attributeData = {
-                    "branch": branch,
-                    "content": content,
-                    "commit_message": "Update .gitattributes",
-                }
-
-                response = requests.put(
-                    postUrl, headers=headers, data=json.dumps(attributeData)
-                )
-                logging.debug("Updating .gitattributes...")
-                writeLogJson(
-                    "uploadFile",
-                    200,
-                    startTime,
-                )
-                try:
-                    responseJson = response.json()
-                except:
-                    responseJson = {}
-
-                return responseJson
-            # if filename already exists, do nothing and just return "File updated"
-            else:
-                writeLogJson(
-                    "uploadFile",
-                    200,
-                    startTime,
-                )
-                return "File updated"
-
-        # if its a regular upload without git-lfs
-        else:
-            # check if file already exists
-            fileHead = requests.head(
-                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-                headers=header,
-            )
-            # if file doesn't exist, upload file
-            if not fileHead.ok:
-                # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
-                payload = {
-                    "branch": str(branch),
-                    # base64 encoding of the isa file
-                    "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Upload of new File {name}",
-                    "encoding": "base64",
-                }
-
-                # create the file on the gitlab
-                request = requests.post(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                    data=json.dumps(payload),
-                    headers=header,
-                )
-                statusCode = status.HTTP_201_CREATED
-
-            # if file already exists, update the file
-            else:
-                payload = {
-                    "branch": branch,
-                    # base64 encoding of the isa file
-                    "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Updating File {name}",
-                    "encoding": "base64",
-                }
-
-                # update the file to the gitlab
-                request = requests.put(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                    data=json.dumps(payload),
-                    headers=header,
-                )
-                statusCode = status.HTTP_200_OK
-
-            logging.debug("Uploading file to repo...")
-            if not request.ok:
-                try:
-                    requestJson = request.json()
-                except:
-                    requestJson = request.content
-                logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Couldn't upload file to repo! Error: {requestJson}",
-                )
-
-            # logging
-            logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")
-
-            response = Response(request.content, statusCode)
-            writeLogJson(
-                "uploadFile",
-                statusCode,
-                startTime,
-            )
-            return response
-    else:
-        writeLogJson(
-            "uploadFile",
-            202,
-            startTime,
-        )
-        return Response(
-            json.dumps(
-                f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"
-            ),
-            202,
-        )
-
-
 # returns a list of the last 100 changes made to the ARC
 @router.get(
     "/getChanges",
     summary="Get the commit history of the ARC",
     status_code=status.HTTP_200_OK,
 )
-async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
+async def getChanges(
+    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+) -> list:
     startTime = time.time()
     try:
         token = getData(data)
@@ -1578,7 +1747,7 @@ async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) 
         )
 
     commits = requests.get(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100",
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100&ref_name={branch}",
         headers=header,
     )
 
@@ -1610,11 +1779,15 @@ async def getChanges(request: Request, id: int, data: Annotated[str, Cookie()]) 
 @router.get(
     "/getStudies", summary="Get a list of current studies", include_in_schema=False
 )
-async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
+async def getStudies(
+    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+) -> list:
     startTime = time.time()
     try:
         # request arc studies
-        studiesJson = await arc_path(id=id, request=request, path="studies", data=data)
+        studiesJson = await arc_path(
+            id=id, request=request, path="studies", data=data, branch=branch
+        )
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1638,11 +1811,15 @@ async def getStudies(request: Request, id: int, data: Annotated[str, Cookie()]) 
 @router.get(
     "/getAssays", summary="Get a list of current assays", include_in_schema=False
 )
-async def getAssays(request: Request, id: int, data: Annotated[str, Cookie()]) -> list:
+async def getAssays(
+    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+) -> list:
     startTime = time.time()
     try:
         # request arc assays
-        assaysJson = await arc_path(id=id, request=request, path="assays", data=data)
+        assaysJson = await arc_path(
+            id=id, request=request, path="assays", data=data, branch=branch
+        )
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
         writeLogJson(
@@ -1832,235 +2009,6 @@ async def syncStudy(
     return str(commitResponse)
 
 
-# deletes the specific file on the given path
-@router.delete(
-    "/deleteFile",
-    summary="Deletes the file on the given path",
-    status_code=status.HTTP_200_OK,
-)
-async def deleteFile(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
-):
-    startTime = time.time()
-    try:
-        token = getData(data)
-        header = {
-            "Authorization": "Bearer " + token["gitlab"],
-            "Content-Type": "application/json",
-        }
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to delete the file! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "deleteFile",
-            401,
-            startTime,
-            f"Client is not authorized to delete the file!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to delete this file",
-        )
-
-    payload = {"branch": branch, "commit_message": "Delete file " + path}
-
-    deletion = requests.delete(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-        headers=header,
-        data=json.dumps(payload),
-    )
-
-    if not deletion.ok:
-        logging.error(f"Couldn't delete file {path} ! ERROR: {deletion.content}")
-        writeLogJson(
-            "deleteFile",
-            400,
-            startTime,
-            f"Couldn't delete file {path} ! ERROR: {deletion.content}",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Couldn't delete file on repo! Error: {deletion.content}",
-        )
-    logging.info(f"Deleted file on path: {path}")
-    writeLogJson("deleteFile", 200, startTime)
-    return "Successfully deleted the file!"
-
-
-# deletes the specific folder on the given path (including all files)
-@router.delete(
-    "/deleteFolder",
-    summary="Deletes the entire folder on the given path",
-    status_code=status.HTTP_200_OK,
-)
-async def deleteFolder(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
-):
-    startTime = time.time()
-    try:
-        token = getData(data)
-        header = {
-            "Authorization": "Bearer " + token["gitlab"],
-            "Content-Type": "application/json",
-        }
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to delete the folder! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "deleteFolder",
-            401,
-            startTime,
-            f"Client is not authorized to delete the folder!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to delete this folder",
-        )
-
-    # get the content of the folder
-    folder = await arc_path(id, request, path, data)
-
-    # list of all files to be deleted
-    payload = []
-
-    # async function filling the payload with all files recursively found in the folder
-    async def prepareJson(folder: Arc):
-        for entry in Arc(Arc=json.loads(folder.body)["Arc"]).Arc:
-            # if its a file, add it to the list
-            if entry.type == "blob":
-                payload.append({"action": "delete", "file_path": entry.path})
-
-            # if its a folder, search the folder for any file
-            elif entry.type == "tree":
-                await prepareJson(await arc_path(id, request, entry.path, data))
-
-            # this should never be the case, so pass along anything here
-            else:
-                pass
-
-    # start searching and filling the payload
-    await prepareJson(folder)
-
-    # the final json containing all files to be deleted
-    requestData = {
-        "branch": branch,
-        "commit_message": "Deleting all content from " + path,
-        "actions": payload,
-    }
-
-    deleteRequest = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
-        headers=header,
-        data=json.dumps(requestData),
-    )
-
-    if not deleteRequest.ok:
-        logging.error(f"Couldn't delete folder {path} ! ERROR: {deleteRequest.content}")
-        writeLogJson(
-            "deleteFolder",
-            400,
-            startTime,
-            f"Couldn't delete folder {path} ! ERROR: {deleteRequest.content}",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Couldn't delete folder on repo! Error: {deleteRequest.content}",
-        )
-    logging.info(f"Deleted folder on path: {path}")
-    writeLogJson("deleteFolder", 200, startTime)
-    return "Successfully deleted the folder!"
-
-
-# creates a folder on the given path
-@router.post(
-    "/createFolder",
-    summary="Creates a folder on the given path",
-    status_code=status.HTTP_201_CREATED,
-)
-async def createFolder(
-    request: Request, folder: folderContent, data: Annotated[str, Cookie()]
-):
-    startTime = time.time()
-    try:
-        token = getData(data)
-        header = {
-            "Authorization": "Bearer " + token["gitlab"],
-            "Content-Type": "application/json",
-        }
-
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client not authorized to create new folder! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "createFolder",
-            401,
-            startTime,
-            f"Client not authorized to create new folder!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized to create new folder",
-        )
-
-    # load the properties
-    try:
-        identifier = folder.identifier
-        # the identifier must not contain white space
-        identifier = identifier.replace(" ", "_")
-        path = folder.path
-        if path == "":
-            path = identifier
-        else:
-            path = f"{path}/{identifier}"
-        id = folder.id
-        payload = {
-            "branch": folder.branch,
-            "content": "",
-            "commit_message": "Created new folder " + path,
-        }
-        path += "/.gitkeep"
-    except:
-        logging.error(f"Missing Properties for folder! Data: {folder}")
-        writeLogJson(
-            "createFolder",
-            400,
-            startTime,
-            f"Missing Properties for folder! Data: {folder}",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing Properties for the folder!",
-        )
-
-    request = requests.post(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-        headers=header,
-        data=json.dumps(payload),
-    )
-
-    if not request.ok:
-        logging.error(f"Couldn't create folder {path} ! ERROR: {request.content}")
-        writeLogJson(
-            "createFolder",
-            400,
-            startTime,
-            f"Couldn't create folder {path} ! ERROR: {request.content}",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Couldn't create folder on repo! Error: {request.content}",
-        )
-    logging.info(f"Created folder on path: {path}")
-    writeLogJson("createFolder", 201, startTime)
-    return request.content
-
-
 # sends back a list of metrics for display
 @router.get(
     "/getMetrics",
@@ -2111,7 +2059,7 @@ async def getMetrics(request: Request, pwd: str):
         except:
             statusCodes[entry["status"]] = 1
         # if there is an error, add it to the array
-        if entry["error"] != None:
+        if entry["error"] != None and entry["error"] != "None":
             errors.append(f"{entry['endpoint']}, {entry['status']}: {entry['error']}")
 
     return {
@@ -2119,3 +2067,162 @@ async def getMetrics(request: Request, pwd: str):
         "statusCodes": statusCodes,
         "errors": errors,
     }
+
+
+# returns the list of different branches
+@router.get(
+    "/getBranches",
+    summary="Get a list of different branches for the arc",
+)
+async def getBranches(
+    request: Request, id: int, data: Annotated[str, Cookie()]
+) -> list:
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "getBranches",
+            401,
+            startTime,
+            f"Client is not authorized to view ARC {id}",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized to view this ARC",
+        )
+    try:
+        # request branches
+        branches = requests.get(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/branches",
+            headers=header,
+        )
+        branchJson = branches.json()
+
+    except:
+        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        writeLogJson(
+            "getBranches",
+            401,
+            startTime,
+            f"No authorized Cookie found!",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authorized cookie found!",
+        )
+    writeLogJson("getBranches", 200, startTime)
+    try:
+        return [x["name"] for x in branchJson]
+    except:
+        return ["main"]
+
+
+# here we create a new isa.datamap for the study
+@router.post(
+    "/addDatamap",
+    summary="Creates a new datamap",
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+async def addDatamap(
+    request: Request, datamapContent: datamapContent, data: Annotated[str, Cookie()]
+):
+    startTime = time.time()
+    try:
+        token = getData(data)
+        header = {
+            "Authorization": "Bearer " + token["gitlab"],
+            "Content-Type": "application/json",
+        }
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client not authorized to create new datamap! Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            "addDatamap",
+            401,
+            startTime,
+            f"Client not authorized to create new datamap!",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to create new datamap",
+        )
+
+    # load the isa properties
+    try:
+        id = datamapContent.id
+        path = datamapContent.path
+        branch = datamapContent.branch
+    except:
+        logging.error(f"Missing Properties for datamap! Data: {datamapContent}")
+        writeLogJson(
+            "addDatamap",
+            400,
+            startTime,
+            f"Missing Properties for datamap! Data: {datamapContent}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Properties for the datamap!",
+        )
+
+    ## commit the folders and the investigation isa to the repo
+
+    datamap = [
+        {
+            "action": "create",
+            "file_path": f"{path}/isa.datamap.xlsx",
+            "content": base64.b64encode(
+                open(
+                    f"{os.environ.get('BACKEND_SAVE')}/isa_files/isa.datamap.xlsx",
+                    "rb",
+                ).read()
+            ).decode("utf-8"),
+            "encoding": "base64",
+        },
+    ]
+
+    # wrap the payload into json
+    payload = json.dumps(
+        {
+            "branch": branch,
+            "commit_message": f"Added new datamap",
+            "actions": datamap,
+        }
+    )
+    logging.debug("Sent commit request with payload " + str(payload))
+    # send the data to the repo
+    commitRequest = requests.post(
+        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits",
+        headers=header,
+        data=payload,
+    )
+    if not commitRequest.ok:
+        logging.error(f"Couldn't commit datamap to ARC! ERROR: {commitRequest.content}")
+        writeLogJson(
+            "addDatamap",
+            500,
+            startTime,
+            f"Couldn't commit datamap to ARC! ERROR: {commitRequest.content}",
+        )
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Couldn't commit datamap to repo! Error: {commitRequest.content}",
+        )
+
+    logging.info(f"Created datamap in study {path} for ARC {id}")
+
+    writeLogJson(
+        "addDatamap",
+        201,
+        startTime,
+    )
+    return commitRequest.content

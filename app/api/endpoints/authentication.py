@@ -1,9 +1,11 @@
 import json
 from typing import Annotated
-from fastapi import APIRouter, Cookie, Request, Response, status
+from fastapi import APIRouter, Cookie, Request, Response
 from fastapi.responses import RedirectResponse
 from starlette.config import Config
+import urllib
 from app.api.endpoints.projects import getUserName
+from cryptography.fernet import Fernet
 
 # from starlette.requests import Request
 from starlette.responses import HTMLResponse
@@ -19,7 +21,6 @@ import time
 ## Read Oauth client info from .env for production
 config = Config(".env")
 oauth = OAuth(config)
-# oauth = OAuth()
 
 oauth.register(
     name="dev",
@@ -45,42 +46,56 @@ oauth.register(
     client_kwargs={"scope": "openid api profile"},
 )
 
+oauth.register(
+    name="tuebingen_testenv",
+    server_metadata_url="https://gitlab.test-nfdi4plants.de/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid api profile"},
+)
+
+# backend_address = "http://localhost:8000/arcmanager/api/v1/auth/"
+backend_address = "https://nfdi4plants.de/arcmanager/api/v1/auth/"
+
+# redirect = "http://localhost:5173"
+redirect = "https://nfdi4plants.de/arcmanager/app/index.html"
+
+
+def encryptToken(content: bytes) -> bytes:
+    fernetKey = os.environ.get("FERNET").encode()
+    return Fernet(fernetKey).encrypt(content)
+
 
 def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
-    with open("log.json", "r") as log:
-        jsonLog = json.load(log)
+    try:
+        with open("log.json", "r") as log:
+            jsonLog = json.load(log)
 
-    jsonLog.append(
-        {
-            "endpoint": endpoint,
-            "status": status,
-            "error": error,
-            "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
-            "response_time": time.time() - startTime,
-        }
-    )
+        jsonLog.append(
+            {
+                "endpoint": endpoint,
+                "status": status,
+                "error": str(error),
+                "date": time.strftime("%d/%m/%Y - %H:%M:%S", time.localtime()),
+                "response_time": time.time() - startTime,
+            }
+        )
 
-    with open("log.json", "w") as logWrite:
-        json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+        with open("log.json", "w") as logWrite:
+            json.dump(jsonLog, logWrite, indent=4, separators=(",", ": "))
+    except:
+        print("Error while logging to json!")
 
 
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
 async def login(request: Request, datahub: str):
-    redirect_uri = (
-       f"http://localhost:8000/arcmanager/api/v1/auth/callback?datahub={datahub}"
-    )
-    # redirect_uri = (
-    #     f"https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub={datahub}"
-    # )
+    redirect_uri = f"{backend_address}callback?datahub={datahub}"
     try:
         # construct authorization url for requested datahub and redirect
         if datahub == "dev":
             return await oauth.dev.authorize_redirect(request, redirect_uri)
         elif datahub == "tübingen":
             # change uri with 'ü' to 'ue'
-            redirect_uri = "http://localhost:8000/arcmanager/api/v1/auth/callback?datahub=tuebingen"
-            # redirect_uri = "https://nfdi4plants.de/arcmanager/api/v1/auth/callback?datahub=tuebingen"
+            redirect_uri = f"{backend_address}callback?datahub=tuebingen"
             return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
         elif datahub == "freiburg":
             return await oauth.freiburg.authorize_redirect(request, redirect_uri)
@@ -88,13 +103,16 @@ async def login(request: Request, datahub: str):
             return await oauth.plantmicrobe.authorize_redirect(request, redirect_uri)
         elif datahub == "tuebingen":
             return await oauth.tuebingen.authorize_redirect(request, redirect_uri)
+        elif datahub == "tuebingen_testenv":
+            return await oauth.tuebingen_testenv.authorize_redirect(
+                request, redirect_uri
+            )
         else:
             return "invalid DataHUB selection"
 
     # if authentication fails (e.g. due to a timeout), then return back to the frontend containing an error in the cookies
     except:
-        response = RedirectResponse("http://localhost:5173")
-        # response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
+        response = RedirectResponse(redirect)
         response.set_cookie("error", "DataHUB not available")
         return response
 
@@ -107,8 +125,7 @@ async def login(request: Request, datahub: str):
 )
 async def callback(request: Request, datahub: str):
     startTime = time.time()
-    response = RedirectResponse("http://localhost:5173")
-    # response = RedirectResponse("https://nfdi4plants.de/arcmanager/app/index.html")
+    response = RedirectResponse(redirect)
     try:
         if datahub == "dev":
             token = await oauth.dev.authorize_access_token(request)
@@ -118,6 +135,8 @@ async def callback(request: Request, datahub: str):
             token = await oauth.freiburg.authorize_access_token(request)
         elif datahub == "plantmicrobe":
             token = await oauth.plantmicrobe.authorize_access_token(request)
+        elif datahub == "tuebingen_testenv":
+            token = await oauth.tuebingen_testenv.authorize_access_token(request)
 
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error}</h1>")
@@ -128,6 +147,7 @@ async def callback(request: Request, datahub: str):
         raise OAuthError(description="Failed retrieving the token data")
 
     userInfo = token.get("userinfo")["sub"]
+
     # read out private key from .env
     pr_key = (
         b"-----BEGIN RSA PRIVATE KEY-----\n"
@@ -135,26 +155,39 @@ async def callback(request: Request, datahub: str):
         + b"\n-----END RSA PRIVATE KEY-----"
     )
     cookieData = {
-        "gitlab": access_token,
+        "gitlab": encryptToken(access_token.encode()).decode(),
         "target": datahub,
     }
     # encode cookie data with rsa key
     encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
     request.session["data"] = encodedCookie
     response.set_cookie(
-        "data", encodedCookie, httponly=True, secure=True, samesite="strict"
+        "data",
+        encodedCookie,
+        httponly=True,
+        secure=True,
+        samesite="strict",
     )
     response.set_cookie("logged_in", "true", httponly=False)
-    response.set_cookie(
-        "username",
-        await getUserName(datahub, userInfo, access_token),
-        httponly=False,
-    )
+    response.set_cookie("timer", time.time(), httponly=False)
+
+    try:
+        username = await getUserName(datahub, userInfo, access_token)
+        response.set_cookie(
+            "username",
+            urllib.parse.quote(username),
+            httponly=False,
+        )
+    except:
+        response.set_cookie("username", "user", httponly=False)
     # delete any leftover error cookie
     response.delete_cookie("error")
 
     request.session.clear()
-    writeLogJson("callback", 307, startTime)
+    try:
+        writeLogJson("callback", 307, startTime)
+    except:
+        pass
     return response
 
 
@@ -166,5 +199,6 @@ async def logout(request: Request):
     response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
+    response.delete_cookie("timer")
     request.cookies.clear()
     return response
