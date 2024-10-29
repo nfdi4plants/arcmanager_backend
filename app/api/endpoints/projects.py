@@ -176,6 +176,76 @@ def fileSizeReadable(size: int) -> str:
     return f"{size} Bits"
 
 
+# checks whether the assay is already linked in a study (if so, update the data)
+async def checkAssayLink(
+    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+):
+    try:
+        studies = await getStudies(request, id, data, branch)
+
+        for study in studies:
+            studyPath = "studies/" + study + "/isa.study.xlsx"
+            studyTest = await arc_file(id, studyPath, request, data, branch)
+
+            for entry in studyTest:
+                if "Study Assay File Name" in entry:
+                    logging.debug(
+                        f"Syncing {path} into {study} after link was found..."
+                    )
+                    if path in entry:
+                        syncData = syncAssayContent(
+                            id=id,
+                            pathToAssay=path,
+                            pathToStudy=studyPath,
+                            branch=branch,
+                            assayName=path.split("/")[-2],
+                        )
+                        await syncAssay(request, syncData, data)
+                        await checkStudyLink(
+                            id,
+                            studyPath,
+                            request,
+                            data,
+                            branch,
+                        )
+                        return True
+                    else:
+                        return entry
+            # if the field wasn't found, it doesn't exist. Therefore return False
+        return False
+    except:
+        logging.warning(f"Failed to sync {path} into {study}")
+        return False
+
+
+# checks whether the study is already linked in the investigation (if so, update it)
+async def checkStudyLink(
+    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+):
+    try:
+        investTest = await arc_file(id, "isa.investigation.xlsx", request, data, branch)
+
+        for entry in investTest:
+            if "Study File Name" in entry:
+                logging.debug(
+                        f"Link found; Syncing {path} into investigation..."
+                    )
+                if path in entry:
+                    syncData = syncStudyContent(
+                        id=id,
+                        pathToStudy=path,
+                        studyName=path.split("/")[-2],
+                        branch=branch,
+                    )
+                    await syncStudy(request, syncData, data)
+                    return True
+        # if the field wasn't found, it doesn't exist. Therefore return False
+        return False
+    except:
+        logging.warning(f"Failed to sync {path} into investigation")
+        return False
+
+
 # get a list of all arcs accessible to the user
 @router.get(
     "/arc_list",
@@ -962,6 +1032,15 @@ async def saveFile(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File could not be edited!",
+        )
+
+    if "assays" in isaContent.isaPath:
+        await checkAssayLink(
+            isaContent.isaRepo, isaContent.isaPath, request, data, isaContent.arcBranch
+        )
+    elif "studies" in isaContent.isaPath:
+        await checkStudyLink(
+            isaContent.isaRepo, isaContent.isaPath, request, data, isaContent.arcBranch
         )
 
     logging.info(f"Sent file {isaContent.isaPath} to ARC {isaContent.isaRepo}")
