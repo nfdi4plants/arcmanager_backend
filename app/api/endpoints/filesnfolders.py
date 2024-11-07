@@ -1145,9 +1145,18 @@ async def renameFolder(
 
                 # if its a folder, search the folder for any file
                 elif entry.type == "tree":
-                    await prepareJson(
-                        await arc_path(id, request, entry.path, data, page)
+                    # get the number of pages
+                    subPath = session.head(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={entry.path}&ref={branch}",
+                        headers=header,
                     )
+                    if subPath.ok:
+                        for subPage in range(
+                            1, int(subPath.headers["X-Total-Pages"]) + 1
+                        ):
+                            await prepareJson(
+                                await arc_path(id, request, entry.path, data, subPage)
+                            )
 
                 # this should never be the case, so pass along anything here
                 else:
