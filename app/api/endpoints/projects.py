@@ -227,9 +227,7 @@ async def checkStudyLink(
 
         for entry in investTest:
             if "Study File Name" in entry:
-                logging.debug(
-                        f"Link found; Syncing {path} into investigation..."
-                    )
+                logging.debug(f"Link found; Syncing {path} into investigation...")
                 if path in entry:
                     syncData = syncStudyContent(
                         id=id,
@@ -1962,8 +1960,22 @@ async def syncAssay(
         )
 
     # get the two files in the backend
-    await arc_file(id=id, path=pathToAssay, request=request, branch=branch, data=data)
-    await arc_file(id, pathToStudy, request, data, branch)
+    try:
+        await arc_file(
+            id=id, path=pathToAssay, request=request, branch=branch, data=data
+        )
+    except:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Study '{assayName}' has no isa.assay.xlsx file! Please add/upload one!",
+        )
+    try:
+        await arc_file(id, pathToStudy, request, data, branch)
+    except:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Study '{pathToStudy}' has no isa.study.xlsx file! Please add/upload one!",
+        )
 
     assayPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToAssay}"
     studyPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToStudy}"
@@ -2046,10 +2058,26 @@ async def syncStudy(
         )
 
     # get the two files in the backend
-    await arc_file(
-        id=id, path="isa.investigation.xlsx", request=request, data=data, branch=branch
-    )
-    await arc_file(id, pathToStudy, request, data, branch)
+    try:
+        await arc_file(
+            id=id,
+            path="isa.investigation.xlsx",
+            request=request,
+            data=data,
+            branch=branch,
+        )
+    except:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No isa.investigation.xlsx found! Please add/upload one!",
+        )
+    try:
+        await arc_file(id, pathToStudy, request, data, branch)
+    except:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Study '{studyName}' has no isa.study.xlsx file! Please add/upload one!",
+        )
 
     investPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/isa.investigation.xlsx"
     studyPath = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{pathToStudy}"

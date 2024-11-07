@@ -485,36 +485,38 @@ async def uploadFile(
                                 detail=f"Couldn't check file status! Error: {e}",
                             )
                         if downloadCheck.ok:
-                            checkResult = downloadCheck.json()
-                            header_download = checkResult["objects"][0]["actions"][
-                                "download"
-                            ]["header"]
-                            urlDownload = checkResult["objects"][0]["actions"][
-                                "download"
-                            ]["href"]
-
                             try:
-                                lfsCheck = session.head(
-                                    urlDownload,
-                                    headers=header_download,
-                                )
+                                checkResult = downloadCheck.json()
+                                header_download = checkResult["objects"][0]["actions"][
+                                    "download"
+                                ]["header"]
+                                urlDownload = checkResult["objects"][0]["actions"][
+                                    "download"
+                                ]["href"]
+
+                                try:
+                                    lfsCheck = session.head(
+                                        urlDownload,
+                                        headers=header_download,
+                                    )
+                                except Exception as e:
+                                    logging.error(e)
+                                    writeLogJson("uploadFile", 504, startTime, e)
+                                    raise HTTPException(
+                                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                                        detail=f"Couldn't check file status! Error: {e}",
+                                    )
+
+                                # if file is available, break loop
+                                if lfsCheck.ok:
+                                    logging.debug(f"Upload of file {name} successful")
+                                    break
+                                else:
+                                    logging.warning(
+                                        f"File {name} not found in LFS storage, retrying upload process..."
+                                    )
                             except Exception as e:
                                 logging.error(e)
-                                writeLogJson("uploadFile", 504, startTime, e)
-                                raise HTTPException(
-                                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                                    detail=f"Couldn't check file status! Error: {e}",
-                                )
-
-                            # if file is available, break loop
-                            if lfsCheck.ok:
-                                logging.debug(f"Upload of file {name} successful")
-                                break
-                            else:
-                                logging.warning(
-                                    f"File {name} not found in LFS storage, retrying upload process..."
-                                )
-
             ### end for loop ###
 
             logging.debug("Uploading pointer file to repo...")
