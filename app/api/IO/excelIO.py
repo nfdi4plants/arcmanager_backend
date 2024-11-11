@@ -289,18 +289,25 @@ def createSheet(sheetContent: sheetContent, target: str):
     for i, entry in enumerate(tableHead):
         columnData = [cell for cell in tableData[i]]
         try:
+            # if its a custom column, mark it with a [C] at the end
             if entry["Custom"]:
                 head.append(sanitizeInput(str(entry["Type"])) + "[C]")
             else:
                 head.append(sanitizeInput(str(entry["Type"])))
         except:
             head.append(sanitizeInput(str(entry["Type"])))
+
+        # add the data cells for the column to content
         content.append(columnData)
 
+    # create a dataframe using the first column header and data as basis
     df = pd.DataFrame({head[0]: content[0]})
+
+    # remove first column and data to prevent duplication
     head.pop(0)
     content.pop(0)
 
+    # add data column by column to the dataframe
     for i, entry in enumerate(head):
         try:
             df.insert(i + 1, entry, content[i], allow_duplicates=True)
@@ -318,7 +325,7 @@ def createSheet(sheetContent: sheetContent, target: str):
     except:
         raise HTTPException(
             status_code=500,
-            detail="Error writing the Excel File. Please check your excel file and try to repair it if corrupted!",
+            detail="Error writing the Excel File. Please check your excel file and try to repair it in case of corruption!",
         )
     wb = openpyxl.load_workbook(filename=pathName)
 

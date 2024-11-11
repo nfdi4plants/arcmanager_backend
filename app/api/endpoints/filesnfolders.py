@@ -86,6 +86,9 @@ def removeFromGitAttributes(
         url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
         attributes = requests.get(url, headers=headers)
 
+        if attributes.status_code == 404:
+            return "Nothing to remove!"
+
         if attributes.ok:
 
             content = attributes.text
@@ -234,6 +237,9 @@ async def uploadFile(
         # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
         if lfs == "true":
             if namespace == "":
+                logging.error(
+                    f"No namespace included for file {name}. Namespace: {namespace}"
+                )
                 raise HTTPException(400, "No Namespace was included!")
             logging.debug("Uploading file with lfs...")
 
