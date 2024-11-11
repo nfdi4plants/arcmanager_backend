@@ -216,7 +216,7 @@ async def createArcJson():
             data += Projects(projects=json.loads(projects.body)["projects"]).projects
 
         for i, arc in enumerate(data):
-            if arc.last_activity_at.startswith("2024-10"):
+            if arc.last_activity_at.startswith("2024-11"):
 
                 investData = await getInvestData(arc.id, datahub, arc.default_branch)
 
@@ -244,7 +244,33 @@ async def createArcJson():
                     }
                 )
             else:
-                fullProjects.append(findArc(arc, currentData))
+                oldArcData = findArc(arc, currentData)
+                if oldArcData is not None:
+                    fullProjects.append(oldArcData)
+                else:
+                    fullProjects.append(
+                        {
+                            "datahub": datahub,
+                            "id": arc.id,
+                            "name": arc.name,
+                            "description": arc.description,
+                            "topics": arc.topics,
+                            "author": {
+                                "name": arc.namespace.name,
+                                "username": arc.namespace.full_path,
+                            },
+                            "created_at": formatTimeString(arc.created_at),
+                            "last_activity": formatTimeString(arc.last_activity_at),
+                            "license": await getLicenseData(arc.id, datahub),
+                            "identifier": investData[0],
+                            "url": arc.http_url_to_repo,
+                            "assay_study_relation": await getAssayStudyRel(
+                                arc.id, datahub, arc.default_branch
+                            ),
+                            "contacts": investData[1],
+                            "publications": investData[2],
+                        }
+                    )
 
     with open("searchableArcs.json", "w", encoding="utf8") as f:
         json.dump(fullProjects, f, ensure_ascii=False)
