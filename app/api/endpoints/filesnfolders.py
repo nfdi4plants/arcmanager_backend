@@ -79,55 +79,85 @@ def removeFromGitAttributes(
             "Content-Type": "application/json",
         }
     except:
-        return 500
-    url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
-    attributes = requests.get(url, headers=headers)
+        raise HTTPException(status_code=500, detail="Gitlab token was not found!")
 
-    if not attributes.ok:
-        return attributes.status_code
-    content = attributes.text
+    for x in range(5):
+        time.sleep(x)
+        url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
+        attributes = requests.get(url, headers=headers)
 
-    if type(filepath) is list:
-        for i, entry in enumerate(filepath):
-            if rename:
-                content = content.replace(
-                    f"{entry} filter=lfs diff=lfs merge=lfs -text\n",
-                    f"{newPath[i]} filter=lfs diff=lfs merge=lfs -text\n",
-                )
-                content = content.replace(
-                    f"{entry} filter=lfs diff=lfs merge=lfs\n",
-                    f"{newPath[i]} filter=lfs diff=lfs merge=lfs\n",
-                )
+        if attributes.status_code == 404:
+            return "Nothing to remove!"
+
+        if attributes.ok:
+
+            content = attributes.text
+
+            found = False
+
+            if type(filepath) is list:
+                for i, entry in enumerate(filepath):
+                    if entry in content:
+                        found = True
+
+                    if rename:
+                        content = content.replace(
+                            f"{entry} filter=lfs diff=lfs merge=lfs -text\n",
+                            f"{newPath[i]} filter=lfs diff=lfs merge=lfs -text\n",
+                        )
+                        content = content.replace(
+                            f"{entry} filter=lfs diff=lfs merge=lfs\n",
+                            f"{newPath[i]} filter=lfs diff=lfs merge=lfs\n",
+                        )
+                    else:
+                        content = content.replace(
+                            f"{entry} filter=lfs diff=lfs merge=lfs -text\n", ""
+                        )
+                        content = content.replace(
+                            f"{entry} filter=lfs diff=lfs merge=lfs\n", ""
+                        )
             else:
+                if filepath in content:
+                    found = True
                 content = content.replace(
-                    f"{entry} filter=lfs diff=lfs merge=lfs -text\n", ""
+                    f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", ""
                 )
                 content = content.replace(
-                    f"{entry} filter=lfs diff=lfs merge=lfs\n", ""
+                    f"{filepath} filter=lfs diff=lfs merge=lfs\n", ""
                 )
-    else:
-        content = content.replace(
-            f"{filepath} filter=lfs diff=lfs merge=lfs -text\n", ""
-        )
-        content = content.replace(f"{filepath} filter=lfs diff=lfs merge=lfs\n", "")
 
-    postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
+            postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
 
-    attributeData = {
-        "branch": branch,
-        "content": content,
-        "commit_message": "Update .gitattributes",
-    }
-    try:
-        response = session.put(postUrl, headers=headers, data=json.dumps(attributeData))
-    except Exception as e:
-        logging.error(e)
-        return 504
+            attributeData = {
+                "branch": branch,
+                "content": content,
+                "commit_message": "Update .gitattributes",
+            }
+            if found:
+                try:
+                    response = requests.put(
+                        postUrl, headers=headers, data=json.dumps(attributeData)
+                    )
+                except Exception as e:
+                    logging.error(e)
+                    raise HTTPException(status_code=500, detail="ERROR: " + str(e))
+                if response.status_code == 400:
+                    logging.DEBUG("Retry removing entry from gitattributes")
+                if not response.ok and response.status_code != 400:
+                    return response.status_code
 
-    if not response.ok:
-        return response.status_code
+                if response.ok:
+                    return "Replaced"
+            else:
+                return "No entry found!"
 
-    return "Replaced"
+    # if after 5 tries the .gitattributes wasn't found or somehow else not modified, return an error
+    logging.warning(".gitattributes could not be modified for " + str(filepath))
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="ERROR: .gitattributes could not be updated! Please add entry for file "
+        + str(filepath),
+    )
 
 
 # either caches the given byte chunk or uploads the file directly (merges all the byte chunks as soon as all have been received)
@@ -207,6 +237,9 @@ async def uploadFile(
         # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
         if lfs == "true":
             if namespace == "":
+                logging.error(
+                    f"No namespace included for file {name}. Namespace: {namespace}"
+                )
                 raise HTTPException(400, "No Namespace was included!")
             logging.debug("Uploading file with lfs...")
 
@@ -284,7 +317,7 @@ async def uploadFile(
                         status_code=HTTP_401_UNAUTHORIZED,
                         detail="Not authorized to upload a File! Log in again!",
                     )
-                logging.debug("Posting download URL...")
+                logging.debug("Uploading file to lfs...")
                 try:
                     result = r.json()
                 except:
@@ -458,34 +491,38 @@ async def uploadFile(
                                 detail=f"Couldn't check file status! Error: {e}",
                             )
                         if downloadCheck.ok:
-                            checkResult = downloadCheck.json()
-                            header_download = checkResult["objects"][0]["actions"][
-                                "download"
-                            ]["header"]
-                            urlDownload = checkResult["objects"][0]["actions"][
-                                "download"
-                            ]["href"]
-
                             try:
-                                lfsCheck = session.head(
-                                    urlDownload,
-                                    headers=header_download,
-                                )
+                                checkResult = downloadCheck.json()
+                                header_download = checkResult["objects"][0]["actions"][
+                                    "download"
+                                ]["header"]
+                                urlDownload = checkResult["objects"][0]["actions"][
+                                    "download"
+                                ]["href"]
+
+                                try:
+                                    lfsCheck = session.head(
+                                        urlDownload,
+                                        headers=header_download,
+                                    )
+                                except Exception as e:
+                                    logging.error(e)
+                                    writeLogJson("uploadFile", 504, startTime, e)
+                                    raise HTTPException(
+                                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                                        detail=f"Couldn't check file status! Error: {e}",
+                                    )
+
+                                # if file is available, break loop
+                                if lfsCheck.ok:
+                                    logging.debug(f"Upload of file {name} successful")
+                                    break
+                                else:
+                                    logging.warning(
+                                        f"File {name} not found in LFS storage, retrying upload process..."
+                                    )
                             except Exception as e:
                                 logging.error(e)
-                                writeLogJson("uploadFile", 504, startTime, e)
-                                raise HTTPException(
-                                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                                    detail=f"Couldn't check file status! Error: {e}",
-                                )
-
-                            # if file is available, break loop
-                            if lfsCheck.ok:
-                                logging.debug(f"Upload of file {name} successful")
-                                break
-                            else:
-                                logging.warning(f"File {name} not found in LFS storage, retrying upload process...")
-
             ### end for loop ###
 
             logging.debug("Uploading pointer file to repo...")
@@ -496,14 +533,16 @@ async def uploadFile(
 
             ### loop gitattributes ###
 
-            for x in range(5):
+            for y in range(5):
                 ## add filename to the gitattributes
                 url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
 
                 newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
 
                 try:
-                    time.sleep(x * 5)
+                    if y > 0:
+                        logging.debug("Retrying retrieving .gitattributes...")
+                    time.sleep(y * 2)
                     getResponse = session.get(url, headers=headers)
                 except Exception as e:
                     logging.error(e)
@@ -1112,9 +1151,18 @@ async def renameFolder(
 
                 # if its a folder, search the folder for any file
                 elif entry.type == "tree":
-                    await prepareJson(
-                        await arc_path(id, request, entry.path, data, page)
+                    # get the number of pages
+                    subPath = session.head(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={entry.path}&ref={branch}",
+                        headers=header,
                     )
+                    if subPath.ok:
+                        for subPage in range(
+                            1, int(subPath.headers["X-Total-Pages"]) + 1
+                        ):
+                            await prepareJson(
+                                await arc_path(id, request, entry.path, data, subPage)
+                            )
 
                 # this should never be the case, so pass along anything here
                 else:

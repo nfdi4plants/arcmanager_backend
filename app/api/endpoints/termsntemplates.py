@@ -174,32 +174,20 @@ async def getTerms(
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
-        # if there is an extended search requested, make an advanced search call
-        if advanced == "true":
-            request = requests.post(
-                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerms",
-                data=json.dumps([{"limit": 50, "ontologies": [], "query": input}]),
-                timeout=10,
-            )
-            logging.debug(f"Getting an extended list of terms for the input '{input}'!")
-        else:
-            # default is an request call containing the parentTerm values
-            request = requests.post(
-                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTermsByParent",
-                data=json.dumps(
-                    [
-                        {
-                            "limit": 50,
-                            "parentTAN": parentTermAccession,
-                            "query": input,
-                        }
-                    ]
-                ),
-                timeout=7,
-            )
-            logging.debug(
-                f"Getting an specific list of terms for the input '{input}' with parent '{parentName}'!"
-            )
+        request = requests.post(
+            "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerm",
+            data=json.dumps(
+                [
+                    {
+                        "limit": 50,
+                        "query": input,
+                    }
+                ]
+            ),
+            timeout=10,
+        )
+        logging.debug(f"Getting a list of terms for the input '{input}'!")
+
         try:
             termJson = request.json()
         except:
