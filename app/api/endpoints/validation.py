@@ -143,6 +143,7 @@ async def validateInvestigation(
             "title": False,
             "description": False,
             "contacts": [],
+            "dates": []
         }
     # a first structure to check the basic investigation identifier
     investSection: dict[str, bool | list] = {
@@ -155,6 +156,8 @@ async def validateInvestigation(
             getField(investigation, "Investigation Description")[1], str
         ),
         "contacts": await validateContacts(request, id, data),
+        "submissionDate": isinstance(getField(investigation, "Investigation Submission Date")[1], str),
+        "releaseDate": isinstance(getField(investigation, "Investigation Public Release Date")[1], str),
     }
     writeLogJson("validateInvest", 200, startTime)
     return investSection
@@ -206,25 +209,30 @@ async def validateContacts(
     lastName = getField(investigation, "Investigation Person Last Name")[counter]
 
     while isinstance(lastName, str) and lastName != "":
+        orcid = getField(investigation, "Comment[ORCID]")[counter]
         firstName = getField(investigation, "Investigation Person First Name")[counter]
         email = getField(investigation, "Investigation Person Email")[counter]
         affiliation = getField(investigation, "Investigation Person Affiliation")[
             counter
         ]
 
-        # check first name
-        if isinstance(firstName, str) and firstName != "":
-            # check email
-            if isinstance(email, str) and validMail(email):
-                # check affiliation
-                if isinstance(affiliation, str) and affiliation != "":
-                    contacts.append(True)
+        # check orcid
+        if isinstance(orcid, str) and validORICD(orcid):
+            # check first name
+            if isinstance(firstName, str) and firstName != "":
+                # check email
+                if isinstance(email, str) and validMail(email):
+                    # check affiliation
+                    if isinstance(affiliation, str) and affiliation != "":
+                        contacts.append(True)
+                    else:
+                        contacts.append("Affiliation is missing!")
                 else:
-                    contacts.append("Affiliation is missing!")
+                    contacts.append("Email missing or not valid!")
             else:
-                contacts.append("Email missing or not valid!")
+                contacts.append("First Name is missing!")
         else:
-            contacts.append("First Name is missing!")
+            contacts.append("ORCID is missing or not valid!")
 
         counter += 1
         # if there is no next entry, break the loop
@@ -278,20 +286,10 @@ def validMail(email: str) -> bool:
         return False
 
 
-# validates an email address
-def validMail(email: str) -> bool:
-    try:
-        return not re.match(r"[^@]+@[^@]+\.[^@]+", email) is None
-    except:
-        return False
-
 # validates an ORICD by number of digits and dashes. VERY BASIC!
 # TODO: Check an actual ORCID db --> Could lead to performance drop
 def validORICD(orcid: str) -> bool:
     try:
-        if re.match(r"\d{4}-\d{4}-\d{4}-\d{4}", orcid):
-            return True
-        else:
-            return False
+        return not re.match(r"\d{4}-\d{4}-\d{4}-\d{4}", orcid) is None
     except:
         return False
