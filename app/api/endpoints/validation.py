@@ -156,8 +156,8 @@ async def validateInvestigation(
             getField(investigation, "Investigation Description")[1], str
         ),
         "contacts": await validateContacts(request, id, data),
-        "submissionDate": isinstance(getField(investigation, "Investigation Submission Date")[1], str),
-        "releaseDate": isinstance(getField(investigation, "Investigation Public Release Date")[1], str),
+        "submissionDate": valiDate(getField(investigation, "Investigation Submission Date")[1]),
+        "releaseDate": valiDate(getField(investigation, "Investigation Public Release Date")[1]),
     }
     writeLogJson("validateInvest", 200, startTime)
     return investSection
@@ -274,7 +274,7 @@ def valiDate(date: str) -> bool:
     try:
         datetime.datetime.fromisoformat(date)
     except:
-        return False
+        return "Date invalid!"
     return True
 
 
