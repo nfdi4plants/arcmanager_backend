@@ -121,8 +121,6 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
     writeLogJson("validateArc", 200, startTime)
     return valid
 
-    
-
 
 # validate the investigation file
 @router.get("/validateInvest", summary="Validates the Investigation file of the ARC")
@@ -143,7 +141,7 @@ async def validateInvestigation(
             "title": False,
             "description": False,
             "contacts": [],
-            "dates": []
+            "dates": [],
         }
     # a first structure to check the basic investigation identifier
     investSection: dict[str, bool | list] = {
@@ -156,8 +154,12 @@ async def validateInvestigation(
             getField(investigation, "Investigation Description")[1], str
         ),
         "contacts": await validateContacts(request, id, data),
-        "submissionDate": valiDate(getField(investigation, "Investigation Submission Date")[1]),
-        "releaseDate": valiDate(getField(investigation, "Investigation Public Release Date")[1]),
+        "submissionDate": valiDate(
+            getField(investigation, "Investigation Submission Date")[1]
+        ),
+        "releaseDate": valiDate(
+            getField(investigation, "Investigation Public Release Date")[1]
+        ),
     }
     writeLogJson("validateInvest", 200, startTime)
     return investSection
@@ -209,7 +211,10 @@ async def validateContacts(
     lastName = getField(investigation, "Investigation Person Last Name")[counter]
 
     while isinstance(lastName, str) and lastName != "":
-        orcid = getField(investigation, "Comment[ORCID]")[counter]
+        try:
+            orcid = getField(investigation, "Comment[ORCID]")[counter]
+        except:
+            orcid = ""
         firstName = getField(investigation, "Investigation Person First Name")[counter]
         email = getField(investigation, "Investigation Person Email")[counter]
         affiliation = getField(investigation, "Investigation Person Affiliation")[
@@ -269,8 +274,9 @@ def getField(isaFile: list, fieldName: str) -> list:
     # if the field wasn't found, it doesn't exist. Therefore return None
     return [fieldName, None]
 
+
 # validates a date value
-def valiDate(date: str) -> bool:
+def valiDate(date: str) -> bool | str:
     try:
         datetime.datetime.fromisoformat(date)
     except:
