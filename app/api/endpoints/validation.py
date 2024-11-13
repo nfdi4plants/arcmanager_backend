@@ -15,14 +15,15 @@ from fastapi import (
 import json
 import os
 import requests
+import re
 
 import time
 import datetime
 
 from app.models.gitlab.arc import Arc
-
 from app.api.endpoints.projects import (
     arc_file,
+    commitFile,
     arc_path,
     arc_tree,
     getAssays,
@@ -120,6 +121,8 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
     writeLogJson("validateArc", 200, startTime)
     return valid
 
+    
+
 
 # validate the investigation file
 @router.get("/validateInvest", summary="Validates the Investigation file of the ARC")
@@ -140,6 +143,7 @@ async def validateInvestigation(
             "title": False,
             "description": False,
             "contacts": [],
+            "dates": []
         }
     # a first structure to check the basic investigation identifier
     investSection: dict[str, bool | list] = {
@@ -152,6 +156,8 @@ async def validateInvestigation(
             getField(investigation, "Investigation Description")[1], str
         ),
         "contacts": await validateContacts(request, id, data),
+        "submissionDate": valiDate(getField(investigation, "Investigation Submission Date")[1]),
+        "releaseDate": valiDate(getField(investigation, "Investigation Public Release Date")[1]),
     }
     writeLogJson("validateInvest", 200, startTime)
     return investSection
@@ -203,25 +209,30 @@ async def validateContacts(
     lastName = getField(investigation, "Investigation Person Last Name")[counter]
 
     while isinstance(lastName, str) and lastName != "":
+        orcid = getField(investigation, "Comment[ORCID]")[counter]
         firstName = getField(investigation, "Investigation Person First Name")[counter]
         email = getField(investigation, "Investigation Person Email")[counter]
         affiliation = getField(investigation, "Investigation Person Affiliation")[
             counter
         ]
 
-        # check first name
-        if isinstance(firstName, str) and firstName != "":
-            # check email
-            if isinstance(email, str) and validMail(email):
-                # check affiliation
-                if isinstance(affiliation, str) and affiliation != "":
-                    contacts.append(True)
+        # check orcid
+        if isinstance(orcid, str) and validORICD(orcid):
+            # check first name
+            if isinstance(firstName, str) and firstName != "":
+                # check email
+                if isinstance(email, str) and validMail(email):
+                    # check affiliation
+                    if isinstance(affiliation, str) and affiliation != "":
+                        contacts.append(True)
+                    else:
+                        contacts.append("Affiliation is missing!")
                 else:
-                    contacts.append("Affiliation is missing!")
+                    contacts.append("Email missing or not valid!")
             else:
-                contacts.append("Email missing or not valid!")
+                contacts.append("First Name is missing!")
         else:
-            contacts.append("First Name is missing!")
+            contacts.append("ORCID is missing or not valid!")
 
         counter += 1
         # if there is no next entry, break the loop
@@ -258,13 +269,12 @@ def getField(isaFile: list, fieldName: str) -> list:
     # if the field wasn't found, it doesn't exist. Therefore return None
     return [fieldName, None]
 
-
 # validates a date value
 def valiDate(date: str) -> bool:
     try:
         datetime.datetime.fromisoformat(date)
     except:
-        return False
+        return "Date invalid!"
     return True
 
 
@@ -272,5 +282,14 @@ def valiDate(date: str) -> bool:
 def validMail(email: str) -> bool:
     try:
         return not re.match(r"[^@]+@[^@]+\.[^@]+", email) is None
+    except:
+        return False
+
+
+# validates an ORICD by number of digits and dashes. VERY BASIC!
+# TODO: Check an actual ORCID db --> Could lead to performance drop
+def validORICD(orcid: str) -> bool:
+    try:
+        return not re.match(r"\d{4}-\d{4}-\d{4}-\d{4}", orcid) is None
     except:
         return False
