@@ -245,9 +245,10 @@ async def uploadFile(
 
             # create a new tempfile to store the data
             tempFile = tempfile.SpooledTemporaryFile(
-                max_size=1024 * 1024 * 100, mode="w+b"
+                max_size=1024 * 1024 * 100,
+                mode="w+b",
+                dir=os.environ.get("BACKEND_SAVE") + "cache",
             )
-
             # write the data into the hash and tempfile
             shasum.update(fullData)
 

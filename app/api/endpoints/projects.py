@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Annotated
 from fastapi import (
     APIRouter,
@@ -31,6 +32,7 @@ import time
 
 from cryptography.fernet import Fernet
 from app.models.gitlab.file import FileContent
+from app.models.gitlab.targets import Targets
 from pdf2image import convert_from_bytes  # type: ignore
 
 # paths in get requests need to be parsed to uri encoded strings
@@ -248,6 +250,8 @@ async def checkStudyLink(
 @router.get(
     "/arc_list",
     summary="Lists your accessible ARCs",
+    description="Retrieve a list of all ARCs viewable and accessible for you. This includes public projects, internal projects and projects where you are a member of. Each page has 20 entries.",
+    response_description="Array containing up to 20 ARCs/Projects wih detailed information, such as id, name, description, creation date and more.",
     status_code=status.HTTP_200_OK,
 )
 async def list_arcs(
@@ -518,9 +522,13 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
 
 # get a list of all public arcs
 @router.get(
-    "/public_arcs", summary="Lists all public ARCs", status_code=status.HTTP_200_OK
+    "/public_arcs",
+    summary="Lists all public ARCs",
+    description="Retrieve a list of all publicly available ARCs. Each page has 20 entries.",
+    response_description="Array containing up to 20 ARCs/Projects wih detailed information, such as id, name, description, creation date and more.",
+    status_code=status.HTTP_200_OK,
 )
-async def public_arcs(target: str, page=1) -> Projects:
+async def public_arcs(target: Targets, page=1) -> Projects:
     startTime = time.time()
     try:
         target = getTarget(target)

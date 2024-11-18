@@ -11,6 +11,8 @@ from cryptography.fernet import Fernet
 from starlette.responses import HTMLResponse
 from authlib.integrations.starlette_client import OAuth, OAuthError
 
+from app.models.gitlab.targets import Targets
+
 router = APIRouter()
 
 import jwt
@@ -87,8 +89,8 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
 
 # redirect user to requested keycloak to enter login credentials
 @router.get("/login", summary="Initiate login process for specified DataHUB")
-async def login(request: Request, datahub: str):
-    redirect_uri = f"{backend_address}callback?datahub={datahub}"
+async def login(request: Request, datahub: Targets):
+    redirect_uri = f"{backend_address}callback?datahub={datahub.value}"
     try:
         # construct authorization url for requested datahub and redirect
         if datahub == "dev":

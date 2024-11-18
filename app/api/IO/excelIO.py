@@ -22,7 +22,7 @@ def getRowIndex(name: str, worksheet: FsWorksheet):
 
 
 # sanitize input
-def sanitizeInput(input: str | list) -> str:
+def sanitizeInput(input: str | list) -> str | list:
     if type(input) is list:
         return [sanitizeInput(entry) for entry in input]
 
@@ -282,7 +282,7 @@ def createSheet(sheetContent: sheetContent, target: str):
     tableHead = sheetContent.tableHead
     tableData = sanitizeInput(sheetContent.tableContent)
     path = sheetContent.path
-    name = sheetContent.name.replace(" ", "_")
+    name = sheetContent.name
     id = sheetContent.id
 
     # loop column by column
@@ -316,6 +316,9 @@ def createSheet(sheetContent: sheetContent, target: str):
 
     pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{id}/{path}"
 
+    importIsa = Xlsx.from_xlsx_file(pathName)
+    importIsa.RemoveWorksheet(name)
+
     try:
         # save data to file
         with pd.ExcelWriter(
@@ -332,13 +335,23 @@ def createSheet(sheetContent: sheetContent, target: str):
     if getIsaType(path) == "datamap":
         # creates a new table inside of the excel sheet
         tab = openpyxl.worksheet.table.Table(
-            displayName="datamapTable" + name,
+            displayName="datamapTable" + name.replace(" ", "_"),
+            ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+        )
+        # alternative table in case of naming clashes
+        tab2 = openpyxl.worksheet.table.Table(
+            displayName="datamapTable" + name.replace(" ", "_") + "123",
             ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
         )
     else:
         # creates a new table inside of the excel sheet
         tab = openpyxl.worksheet.table.Table(
-            displayName="annotationTable" + name,
+            displayName="annotationTable" + name.replace(" ", "_"),
+            ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
+        )
+
+        tab2 = openpyxl.worksheet.table.Table(
+            displayName="annotationTable" + name.replace(" ", "_") + "123",
             ref=f"A1:{openpyxl.utils.get_column_letter(df.shape[1])}{len(df)+1}",
         )
 
@@ -351,7 +364,14 @@ def createSheet(sheetContent: sheetContent, target: str):
         showColumnStripes=True,
     )
     tab.tableStyleInfo = style
-    wb[name].add_table(tab)
+    tab2.tableStyleInfo = style
+    try:
+        wb[name].add_table(tab)
+    except:
+        try:
+            wb[name].add_table(tab2)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"ERROR: {e}")
     wb.save(pathName)
 
 
