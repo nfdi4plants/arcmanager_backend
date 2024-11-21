@@ -88,7 +88,13 @@ def writeLogJson(endpoint: str, status: int, startTime: float, error=None):
 
 
 # redirect user to requested keycloak to enter login credentials
-@router.get("/login", summary="Initiate login process for specified DataHUB")
+@router.get(
+    "/login",
+    summary="Initiate login process for specified DataHUB",
+    description="Starts the authentication process to your chosen datahub (note: this only works in browser line directly, not through the docs due to redirects)",
+    response_description="Redirect to the authentication server of the respective datahub",
+    status_code=302,
+)
 async def login(request: Request, datahub: Targets):
     redirect_uri = f"{backend_address}callback?datahub={datahub.value}"
     try:
@@ -142,6 +148,11 @@ async def callback(request: Request, datahub: str):
 
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error}</h1>")
+    except Exception as error:
+        print(error)
+        response = RedirectResponse(redirect)
+        response.set_cookie("error", "DataHUB not available")
+        return response
 
     try:
         access_token = token.get("access_token")
@@ -193,7 +204,12 @@ async def callback(request: Request, datahub: str):
     return response
 
 
-@router.get("/logout", summary="Manually delete server-side user session")
+@router.get(
+    "/logout",
+    summary="Manually delete server-side user session",
+    description="Logs you out of the datahub by removing all cookies set after the login containing the access token and more.",
+    response_description="logout successful",
+)
 async def logout(request: Request):
     response = Response("logout successful", media_type="text/plain")
 

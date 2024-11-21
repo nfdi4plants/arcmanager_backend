@@ -3,7 +3,9 @@ from typing import Annotated
 from fastapi import (
     APIRouter,
     Cookie,
+    Depends,
     HTTPException,
+    Query,
     status,
     Response,
     Request,
@@ -128,7 +130,7 @@ async def getUserName(target: str, userId: int, access_token: str) -> str:
 
 
 # decrypt the cookie data with the corresponding public key
-def getData(cookie: str):
+def getData(data: Annotated[str, Cookie()]):
     # get public key from .env to decode data (in form of a byte string)
     public_key = (
         b"-----BEGIN PUBLIC KEY-----\n"
@@ -136,15 +138,26 @@ def getData(cookie: str):
         + b"\n-----END PUBLIC KEY-----"
     )
 
-    decodedToken = jwt.decode(cookie, public_key, algorithms=["RS256", "HS256"])
-    fernetKey = os.environ.get("FERNET").encode()
     try:
+        decodedToken = jwt.decode(data, public_key, algorithms=["RS256", "HS256"])
+
+        fernetKey = os.environ.get("FERNET").encode()
         decodedToken["gitlab"] = (
             Fernet(fernetKey).decrypt(decodedToken["gitlab"].encode()).decode()
         )
     except:
-        pass
+        logging.warning(
+            f"Client connected with no valid cookies/Client is not logged in. Cookies: {data}"
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not logged in",
+        )
+
     return decodedToken
+
+
+commonToken = Annotated[str, Depends(getData)]
 
 
 # writes the log entry into the json log file
@@ -180,14 +193,14 @@ def fileSizeReadable(size: int) -> str:
 
 # checks whether the assay is already linked in a study (if so, update the data)
 async def checkAssayLink(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+    id: int, path: str, request: Request, token: commonToken, branch="main"
 ):
     try:
-        studies = await getStudies(request, id, data, branch)
+        studies = await getStudies(request, id, token, branch)
 
         for study in studies:
             studyPath = "studies/" + study + "/isa.study.xlsx"
-            studyTest = await arc_file(id, studyPath, request, data, branch)
+            studyTest = await arc_file(id, studyPath, request, token, branch)
 
             for entry in studyTest:
                 if "Study Assay File Name" in entry:
@@ -202,12 +215,12 @@ async def checkAssayLink(
                             branch=branch,
                             assayName=path.split("/")[-2],
                         )
-                        await syncAssay(request, syncData, data)
+                        await syncAssay(request, syncData, token)
                         await checkStudyLink(
                             id,
                             studyPath,
                             request,
-                            data,
+                            token,
                             branch,
                         )
                         return True
@@ -222,10 +235,12 @@ async def checkAssayLink(
 
 # checks whether the study is already linked in the investigation (if so, update it)
 async def checkStudyLink(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+    id: int, path: str, request: Request, token: commonToken, branch="main"
 ):
     try:
-        investTest = await arc_file(id, "isa.investigation.xlsx", request, data, branch)
+        investTest = await arc_file(
+            id, "isa.investigation.xlsx", request, token, branch
+        )
 
         for entry in investTest:
             if "Study File Name" in entry:
@@ -237,7 +252,7 @@ async def checkStudyLink(
                         studyName=path.split("/")[-2],
                         branch=branch,
                     )
-                    await syncStudy(request, syncData, data)
+                    await syncStudy(request, syncData, token)
                     return True
         # if the field wasn't found, it doesn't exist. Therefore return False
         return False
@@ -255,11 +270,16 @@ async def checkStudyLink(
     status_code=status.HTTP_200_OK,
 )
 async def list_arcs(
-    request: Request, data: Annotated[str, Cookie()], owned=False, page=1
+    request: Request,
+    token: commonToken,
+    owned: Annotated[
+        bool,
+        Query(),
+    ] = False,
+    page: Annotated[int, Query(ge=1)] = 1,
 ) -> Projects:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -402,10 +422,9 @@ async def list_arcs(
     summary="Just sends the headers containing the pages count",
     include_in_schema=False,
 )
-async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned=False):
+async def list_arcs_head(request: Request, token: commonToken, owned=False):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -528,7 +547,9 @@ async def list_arcs_head(request: Request, data: Annotated[str, Cookie()], owned
     response_description="Array containing up to 20 ARCs/Projects wih detailed information, such as id, name, description, creation date and more.",
     status_code=status.HTTP_200_OK,
 )
-async def public_arcs(target: Targets, page=1) -> Projects:
+async def public_arcs(
+    target: Targets, page: Annotated[int, Query(ge=1)] = 1
+) -> Projects:
     startTime = time.time()
     try:
         target = getTarget(target)
@@ -547,7 +568,7 @@ async def public_arcs(target: Targets, page=1) -> Projects:
         # if the requested gitlab is not available after 30s, return error 504
         request = requests.get(
             f"{os.environ.get(target)}/api/v4/projects?page={page}",
-            timeout=30,
+            timeout=15,
         )
         if request.status_code == 502:
             raise Exception()
@@ -602,13 +623,21 @@ async def public_arcs(target: Targets, page=1) -> Projects:
 
 
 # get the frontpage tree structure of the arc
-@router.get("/arc_tree", summary="Overview of the ARC", status_code=status.HTTP_200_OK)
+@router.get(
+    "/arc_tree",
+    summary="Overview of the ARC",
+    description="Get the frontpage folder structure of an ARC.",
+    response_description="Array containing the different names of the files and folders of the frontpage, like 'assays' or 'isa.investigation.xlsx'.",
+    status_code=status.HTTP_200_OK,
+)
 async def arc_tree(
-    id: int, data: Annotated[str, Cookie()], request: Request, branch="main"
+    id: Annotated[int, Query(ge=1)],
+    token: commonToken,
+    request: Request,
+    branch: Annotated[str, Query()] = "main",
 ) -> Arc:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -662,19 +691,22 @@ async def arc_tree(
 
 # get a specific tree structure for the given path
 @router.get(
-    "/arc_path", summary="Subdirectory of the ARC", status_code=status.HTTP_200_OK
+    "/arc_path",
+    summary="Subdirectory of the ARC",
+    description="Get the file and folder structure of the specific path inside the ARC.",
+    response_description="Array containing the different names of the files and folders for the given path similar to /arc_tree",
+    status_code=status.HTTP_200_OK,
 )
 async def arc_path(
-    id: int,
+    id: Annotated[int, Query(ge=1)],
     request: Request,
     path: str,
-    data: Annotated[str, Cookie()],
-    page=1,
-    branch="main",
+    token: commonToken,
+    page: Annotated[int, Query(ge=1)] = 1,
+    branch: Annotated[str, Query()] = "main",
 ) -> Arc:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -744,14 +776,19 @@ async def arc_path(
 @router.get(
     "/arc_file",
     summary="Returns the file on the given path",
+    description="Get the file on the given path. This can be an isa file or something else. LFS files will return the pointer file.",
+    response_description="Detailed information of the file, like name, encoding, content, id and more. If its an isa file, it will return a list containing every row of the table as an Array.",
     status_code=status.HTTP_200_OK,
 )
 async def arc_file(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+    id: Annotated[int, Query(ge=1)],
+    path: str,
+    request: Request,
+    token: commonToken,
+    branch: str = "main",
 ) -> FileContent | list[list] | dict:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -968,14 +1005,16 @@ async def arc_file(
 
 
 # reads out the content of the put request body; writes the content to the corresponding isa file on the storage
-@router.put("/saveFile", summary="Write content to isa file")
-async def saveFile(
-    request: Request, isaContent: isaContent, data: Annotated[str, Cookie()]
-):
+@router.put(
+    "/saveFile",
+    summary="Write content to isa file",
+    description="Writes the given row/rows into the isa file on the given path.",
+    response_description="Response of the commit request from Gitlab.",
+)
+async def saveFile(request: Request, isaContent: isaContent, token: commonToken):
     startTime = time.time()
     try:
         isaContent.isaInput = sanitizeInput(isaContent.isaInput)
-        token = getData(data)
         target = token["target"]
     except:
         logging.error(f"SaveFile Request couldn't be processed! Body: {request.body}")
@@ -1022,7 +1061,7 @@ async def saveFile(
             request,
             isaContent.isaRepo,
             isaContent.isaPath,
-            data,
+            token,
             pathName,
             isaContent.arcBranch,
             rowName,
@@ -1042,11 +1081,11 @@ async def saveFile(
 
     if "assays" in isaContent.isaPath:
         await checkAssayLink(
-            isaContent.isaRepo, isaContent.isaPath, request, data, isaContent.arcBranch
+            isaContent.isaRepo, isaContent.isaPath, request, token, isaContent.arcBranch
         )
     elif "studies" in isaContent.isaPath:
         await checkStudyLink(
-            isaContent.isaRepo, isaContent.isaPath, request, data, isaContent.arcBranch
+            isaContent.isaRepo, isaContent.isaPath, request, token, isaContent.arcBranch
         )
 
     logging.info(f"Sent file {isaContent.isaPath} to ARC {isaContent.isaRepo}")
@@ -1058,22 +1097,26 @@ async def saveFile(
     return str(commitResponse)
 
 
-@router.put("/commitFile", summary="Update the content of the file to the repo")
+@router.put(
+    "/commitFile",
+    summary="Update the content of the file to the repo",
+    description="Writes the content into the file on the given path (repoPath). If filePath (used for isa files) is given, the file data is read from backend storage and uploaded to the ARC. If not, then provide the file content as base64 in the request body.",
+    response_description="Response of the commit request from Gitlab.",
+)
 # sends the http PUT request to the git to commit the file on the given filepath
 async def commitFile(
     request: Request,
-    id: int,
+    id: Annotated[int, Query(ge=1)],
     repoPath: str,
-    data: Annotated[str, Cookie()],
-    filePath="",
-    branch="main",
-    message="",
+    token: commonToken,
+    filePath: str = "",
+    branch: str = "main",
+    message: str = "",
 ):
     startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
     try:
-        token = getData(data)
         # if there is no path, there must be file data in the request body
         if filePath == "":
             fileContent = json.loads(requestBody)
@@ -1157,14 +1200,15 @@ async def commitFile(
 # creates a new project in the repo with a readme file; we then initialize the repo folder on the server with the new id of the ARC;
 # then we create the arc and the investigation file and commit the whole structure to the repo
 @router.post(
-    "/createArc", summary="Creates a new Arc", status_code=status.HTTP_201_CREATED
+    "/createArc",
+    summary="Creates a new Arc",
+    status_code=status.HTTP_201_CREATED,
+    description="Creates a new Project with the given Information and fills it with the necessary files and folders to start your ARC.",
+    response_description="Response from gitlab containing the various information of your new created project.",
 )
-async def createArc(
-    request: Request, arcContent: arcContent, data: Annotated[str, Cookie()]
-):
+async def createArc(request: Request, arcContent: arcContent, token: commonToken):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -1255,6 +1299,17 @@ async def createArc(
 
     # replace empty space with underscores
     investIdentifier = investIdentifier.replace(" ", "_")
+
+    # unprotect the main branch
+    try:
+        branchUnProtect = requests.delete(
+            os.environ.get(target)
+            + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}",
+            headers=header,
+        )
+    except Exception as e:
+        logging.error(e)
+        writeLogJson("createArc", 500, startTime, e)
 
     ## commit the folders and the investigation isa to the repo
 
@@ -1358,7 +1413,7 @@ async def createArc(
             id=newArcJson["id"],
             path="isa.investigation.xlsx",
             request=request,
-            data=data,
+            token=token,
             branch=newArcJson["default_branch"],
         )
         # fill in the identifier, name and description of the arc into the investigation file
@@ -1388,7 +1443,7 @@ async def createArc(
             request=request,
             id=newArcJson["id"],
             repoPath="isa.investigation.xlsx",
-            data=data,
+            token=token,
             filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
             branch=newArcJson["default_branch"],
         )
@@ -1404,14 +1459,13 @@ async def createArc(
 )
 async def repairArc(
     request: Request,
-    data: Annotated[str, Cookie()],
+    token: commonToken,
     arcContent: arcContent,
     id: int,
     branch="main",
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -1536,7 +1590,7 @@ async def repairArc(
         id=id,
         path="isa.investigation.xlsx",
         request=request,
-        data=data,
+        token=token,
         branch=branch,
     )
     # fill in the identifier, name and description of the arc into the investigation file
@@ -1566,7 +1620,7 @@ async def repairArc(
         request=request,
         id=id,
         repoPath="isa.investigation.xlsx",
-        data=data,
+        token=token,
         filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/isa.investigation.xlsx",
         branch=branch,
     )
@@ -1579,13 +1633,12 @@ async def repairArc(
     "/createISA",
     summary="Creates a new ISA structure",
     status_code=status.HTTP_201_CREATED,
+    description="Creates a new assay/study with the given name. It will include the excel file, a readme as well as all required folders for the isa type.",
+    response_description="Response of the commit request from Gitlab.",
 )
-async def createIsa(
-    request: Request, isaContent: newIsa, data: Annotated[str, Cookie()]
-):
+async def createIsa(request: Request, isaContent: newIsa, token: commonToken):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -1609,7 +1662,7 @@ async def createIsa(
     try:
         identifier = sanitizeInput(isaContent.identifier)
         id = isaContent.id
-        type = sanitizeInput(isaContent.type)
+        type = isaContent.type
         branch = isaContent.branch
     except:
         logging.error(f"Missing Properties for isa! Data: {isaContent}")
@@ -1670,13 +1723,6 @@ async def createIsa(
                     "content": None,
                 },
             ]
-
-        # if its somehow neither an assay or study to be created
-        case other:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot create isa of type " + type,
-            )
 
     # both types have a README.md and two folders called "protocols" and "resources"
     isaData.append(
@@ -1741,7 +1787,9 @@ async def createIsa(
         case "studies":
             # first, get the file
             pathName = f"{type}/{identifier}/isa.study.xlsx"
-            await arc_file(id, path=pathName, branch=branch, request=request, data=data)
+            await arc_file(
+                id, path=pathName, branch=branch, request=request, token=token
+            )
 
             # then write the identifier in the corresponding field
             writeIsaFile(
@@ -1766,7 +1814,9 @@ async def createIsa(
         case "assays":
             # first, get the file
             pathName = f"{type}/{identifier}/isa.assay.xlsx"
-            await arc_file(id, path=pathName, branch=branch, request=request, data=data)
+            await arc_file(
+                id, path=pathName, branch=branch, request=request, token=token
+            )
 
             # then write the identifier in the corresponding field
             writeIsaFile(
@@ -1793,7 +1843,7 @@ async def createIsa(
         request=request,
         id=id,
         repoPath=pathName,
-        data=data,
+        token=token,
         filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{pathName}",
     )
     writeLogJson(
@@ -1809,13 +1859,17 @@ async def createIsa(
     "/getChanges",
     summary="Get the commit history of the ARC",
     status_code=status.HTTP_200_OK,
+    description="Gives you the 100 latest entries of the commit history.",
+    response_description="Array containing the latest 100 entries of the history stored in an array of strings.",
 )
 async def getChanges(
-    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+    request: Request,
+    id: Annotated[int, Query(ge=1)],
+    token: commonToken,
+    branch: str = "main",
 ) -> list:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -1865,13 +1919,13 @@ async def getChanges(
     "/getStudies", summary="Get a list of current studies", include_in_schema=False
 )
 async def getStudies(
-    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+    request: Request, id: int, token: commonToken, branch="main"
 ) -> list:
     startTime = time.time()
     try:
         # request arc studies
         studiesJson = await arc_path(
-            id=id, request=request, path="studies", data=data, branch=branch
+            id=id, request=request, path="studies", token=token, branch=branch
         )
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
@@ -1897,13 +1951,13 @@ async def getStudies(
     "/getAssays", summary="Get a list of current assays", include_in_schema=False
 )
 async def getAssays(
-    request: Request, id: int, data: Annotated[str, Cookie()], branch="main"
+    request: Request, id: int, token: commonToken, branch="main"
 ) -> list:
     startTime = time.time()
     try:
         # request arc assays
         assaysJson = await arc_path(
-            id=id, request=request, path="assays", data=data, branch=branch
+            id=id, request=request, path="assays", token=token, branch=branch
         )
     except:
         logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
@@ -1925,13 +1979,17 @@ async def getAssays(
 
 
 # writes all the assay data into the isa file of the selected study (adds a new column with the data)
-@router.patch("/syncAssay", summary="Syncs an assay into a study")
+@router.patch(
+    "/syncAssay",
+    summary="Syncs an assay into a study",
+    description="Writes the assay data into the 'Study Assay' part of the given study file, therefore syncing and connecting it to a study.",
+    response_description="Response of the commit request from Gitlab.",
+)
 async def syncAssay(
-    request: Request, syncContent: syncAssayContent, data: Annotated[str, Cookie()]
+    request: Request, syncContent: syncAssayContent, token: commonToken
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         target = token["target"]
 
     except:
@@ -1970,7 +2028,7 @@ async def syncAssay(
     # get the two files in the backend
     try:
         await arc_file(
-            id=id, path=pathToAssay, request=request, branch=branch, data=data
+            id=id, path=pathToAssay, request=request, branch=branch, token=token
         )
     except:
         raise HTTPException(
@@ -1978,7 +2036,7 @@ async def syncAssay(
             detail=f"Study '{assayName}' has no isa.assay.xlsx file! Please add/upload one!",
         )
     try:
-        await arc_file(id, pathToStudy, request, data, branch)
+        await arc_file(id, pathToStudy, request, token, branch)
     except:
         raise HTTPException(
             status_code=404,
@@ -1997,7 +2055,7 @@ async def syncAssay(
             request,
             id,
             pathToStudy,
-            data,
+            token,
             studyPath,
             branch,
             f": synced {pathToAssay} to {pathToStudy}",
@@ -2024,13 +2082,17 @@ async def syncAssay(
 
 
 # writes all the study data into the investigation file (appends the rows of the study to the investigation)
-@router.patch("/syncStudy", summary="Syncs a study into the investigation file")
+@router.patch(
+    "/syncStudy",
+    summary="Syncs a study into the investigation file",
+    description="Writes the full study data into the investigation file or appending it underneath if a study is already in existence. This will sync the study and the assays synced to the study to the investigation file.",
+    response_description="Response of the commit request from Gitlab.",
+)
 async def syncStudy(
-    request: Request, syncContent: syncStudyContent, data: Annotated[str, Cookie()]
+    request: Request, syncContent: syncStudyContent, token: commonToken
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         target = token["target"]
 
     except:
@@ -2071,7 +2133,7 @@ async def syncStudy(
             id=id,
             path="isa.investigation.xlsx",
             request=request,
-            data=data,
+            token=token,
             branch=branch,
         )
     except:
@@ -2080,7 +2142,7 @@ async def syncStudy(
             detail=f"No isa.investigation.xlsx found! Please add/upload one!",
         )
     try:
-        await arc_file(id, pathToStudy, request, data, branch)
+        await arc_file(id, pathToStudy, request, token, branch)
     except:
         raise HTTPException(
             status_code=404,
@@ -2098,7 +2160,7 @@ async def syncStudy(
             request,
             id,
             "isa.investigation.xlsx",
-            data,
+            token,
             investPath,
             branch,
             f": synced {pathToStudy} to ISA investigation",
@@ -2188,13 +2250,14 @@ async def getMetrics(request: Request, pwd: str):
 @router.get(
     "/getBranches",
     summary="Get a list of different branches for the arc",
+    description="Get a list of the names of the different branches of your ARC.",
+    response_description="List of strings containing the different branch names.",
 )
 async def getBranches(
-    request: Request, id: int, data: Annotated[str, Cookie()]
+    request: Request, id: Annotated[int, Query(ge=1)], token: commonToken
 ) -> list:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -2246,11 +2309,10 @@ async def getBranches(
     include_in_schema=False,
 )
 async def addDatamap(
-    request: Request, datamapContent: datamapContent, data: Annotated[str, Cookie()]
+    request: Request, datamapContent: datamapContent, token: commonToken
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",

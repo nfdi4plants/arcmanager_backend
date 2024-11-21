@@ -183,6 +183,8 @@ async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
     summary="Creates a json containing all publicly available Arcs",
     include_in_schema=True,
     status_code=status.HTTP_201_CREATED,
+    description="Iterates through all available datahubs and creates a JSON containing information about all publicly available projects and ARCs (this process takes a while and should not be spammed!)",
+    response_description="Large JSON file containing information about every publicly available ARC",
 )
 async def createArcJson():
     fullProjects = []
@@ -282,6 +284,8 @@ async def createArcJson():
 @router.get(
     "/getArcJson",
     summary="Get the json containing information about all public arcs",
+    description="Gets the current JSON containing the information about all public ARCs (this is not updating the data; for updated data use /createArcJson)",
+    response_description="Large JSON file containing information about every publicly available ARC",
 )
 async def getArcJson():
     data = []

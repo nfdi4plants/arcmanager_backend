@@ -8,9 +8,11 @@ from urllib.parse import quote
 from fastapi import (
     APIRouter,
     Cookie,
+    Depends,
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     status,
@@ -29,7 +31,7 @@ from app.api.endpoints.projects import (
 from app.models.gitlab.arc import Arc
 from app.models.gitlab.commit import Commit
 
-from app.models.gitlab.input import folderContent
+from app.models.gitlab.input import LFSUpload, folderContent
 
 import time
 import logging
@@ -61,6 +63,8 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 
 router = APIRouter()
+
+commonToken = Annotated[str, Depends(getData)]
 
 
 # remove a file from gitattributes if its no longer lfs tracked (through either deletion or upload directly without lfs)
@@ -165,23 +169,24 @@ def removeFromGitAttributes(
     "/uploadFile",
     summary="Uploads the given file to the repo (with or without lfs)",
     status_code=status.HTTP_201_CREATED,
+    description="Uploads the given file to the ARC on the given path. ARCmanager utilizes chunking of files for better upload. All chunks have to be numbered and the total number of chunks has to be provided(defaults are provided). For files larger than 50mb it is recommended to use LFS (set to true).",
+    response_description="Response of the commit from Gitlab.",
 )
 async def uploadFile(
     request: Request,
-    data: Annotated[str, Cookie()],
+    token: commonToken,
     file: Annotated[bytes, File()],
     name: Annotated[str, Form()],
-    id: Annotated[int, Form()],
+    id: Annotated[int, Form(ge=1)],
     path: Annotated[str, Form()],
     branch: Annotated[str, Form()] = "main",
     namespace: Annotated[str, Form()] = "",
-    lfs: Annotated[str, Form()] = False,
-    chunkNumber: Annotated[int, Form()] = 0,
-    totalChunks: Annotated[int, Form()] = 1,
+    lfs: Annotated[LFSUpload, Form()] = "false",
+    chunkNumber: Annotated[int, Form(ge=0)] = 0,
+    totalChunks: Annotated[int, Form(ge=1)] = 1,
 ) -> Commit | dict | str:
     startTime = time.time()
     try:
-        token = getData(data)
         target = getTarget(token["target"])
         header = {
             "Authorization": "Bearer " + token["gitlab"],
@@ -235,7 +240,7 @@ async def uploadFile(
         ##########################
 
         # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
-        if lfs == "true":
+        if lfs.value == "true":
             if namespace == "":
                 logging.error(
                     f"No namespace included for file {name}. Namespace: {namespace}"
@@ -816,13 +821,18 @@ async def uploadFile(
     "/deleteFile",
     summary="Deletes the file on the given path",
     status_code=status.HTTP_200_OK,
+    description="Deletes the file on the given path. This only works for single files. For full folders use /deleteFolder",
+    response_description="Successfully deleted the file!",
 )
 async def deleteFile(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+    id: Annotated[int, Query(ge=1)],
+    path: str,
+    request: Request,
+    token: commonToken,
+    branch: str = "main",
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -874,13 +884,18 @@ async def deleteFile(
     "/deleteFolder",
     summary="Deletes the entire folder on the given path",
     status_code=status.HTTP_200_OK,
+    description="Deletes the folder on the given path. This works through iterating all entries on the given folder path and deleting every single entry in one large commit.",
+    response_description="Successfully deleted the folder",
 )
 async def deleteFolder(
-    id: int, path: str, request: Request, data: Annotated[str, Cookie()], branch="main"
+    id: Annotated[int, Query(ge=1)],
+    path: str,
+    request: Request,
+    token: commonToken,
+    branch: str = "main",
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -918,7 +933,7 @@ async def deleteFolder(
     for page in range(1, pages + 1):
 
         # get the content of the folder
-        folder = await arc_path(id, request, path, data, page)
+        folder = await arc_path(id, request, path, token, page)
 
         # async function filling the payload with all files recursively found in the folder
         async def prepareJson(folder: Arc):
@@ -931,7 +946,7 @@ async def deleteFolder(
                 # if its a folder, search the folder for any file
                 elif entry.type == "tree":
                     await prepareJson(
-                        await arc_path(id, request, entry.path, data, page)
+                        await arc_path(id, request, entry.path, token, page)
                     )
 
                 # this should never be the case, so pass along anything here
@@ -979,13 +994,12 @@ async def deleteFolder(
     "/createFolder",
     summary="Creates a folder on the given path",
     status_code=status.HTTP_201_CREATED,
+    description="Creates a new folder with the given identifier on the given path. This is done through uploading a empty '.gitkeep' file on the newly folder path.",
+    response_description="Response of the commit from Gitlab.",
 )
-async def createFolder(
-    request: Request, folder: folderContent, data: Annotated[str, Cookie()]
-):
+async def createFolder(request: Request, folder: folderContent, token: commonToken):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -1072,18 +1086,19 @@ async def createFolder(
 @router.put(
     "/renameFolder",
     summary="Renames a folder",
+    description="Renames a folder given on the oldPath to the new folder name given on the full newPath. This is done by iterating through all entries in the oldPath folder and moving all entries to the newPath.",
+    response_description="Successfully renamed the folder!",
 )
 async def renameFolder(
     request: Request,
-    data: Annotated[str, Cookie()],
-    id: int,
+    token: commonToken,
+    id: Annotated[int, Query(ge=1)],
     oldPath: str,
     newPath: str,
-    branch="main",
+    branch: str = "main",
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/json",
@@ -1132,7 +1147,7 @@ async def renameFolder(
 
     for page in range(1, pages + 1):
         # get the content of the folder
-        folder = await arc_path(id, request, oldPath, data, page)
+        folder = await arc_path(id, request, oldPath, token, page)
 
         # async function filling the payload with all files recursively found in the folder
         async def prepareJson(folder: Arc):
@@ -1162,7 +1177,7 @@ async def renameFolder(
                             1, int(subPath.headers["X-Total-Pages"]) + 1
                         ):
                             await prepareJson(
-                                await arc_path(id, request, entry.path, data, subPage)
+                                await arc_path(id, request, entry.path, token, subPage)
                             )
 
                 # this should never be the case, so pass along anything here

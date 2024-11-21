@@ -5,7 +5,9 @@ from typing import Annotated
 from fastapi import (
     APIRouter,
     Cookie,
+    Depends,
     HTTPException,
+    Query,
     status,
     Response,
     Request,
@@ -27,13 +29,19 @@ logging.basicConfig(
     level=logging.DEBUG,
 )
 
+commonToken = Annotated[str, Depends(getData)]
+
 
 # get a list of all users for the datahub
-@router.get("/getUser", summary="Get a list of all users")
-async def getUser(request: Request, data: Annotated[str, Cookie()]) -> Users:
+@router.get(
+    "/getUser",
+    summary="Get a list of all users",
+    description="Gets a list of all registered users of the datahub",
+    response_description="Array containing every possible user with details such as the id, name, avatar and more",
+)
+async def getUser(request: Request, token: commonToken) -> Users:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -89,13 +97,12 @@ async def getUser(request: Request, data: Annotated[str, Cookie()]) -> Users:
     "/addUser",
     summary="Adds a user to the project",
     status_code=status.HTTP_201_CREATED,
+    description="Adds a user to your ARC with the given permission rights. There are a total of 5 different roles available and can be set through the 'role' parameter (number between 10-50, multiple of 10).",
+    response_description="User {name} was added successfully!",
 )
-async def addUser(
-    request: Request, userData: userContent, data: Annotated[str, Cookie()]
-):
+async def addUser(request: Request, userData: userContent, token: commonToken):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
             "Content-Type": "application/x-www-form-urlencoded",
@@ -149,13 +156,17 @@ async def addUser(
 
 
 # get a list of all users for the specific Arc
-@router.get("/getArcUser", summary="Get a list of all members of the arc")
+@router.get(
+    "/getArcUser",
+    summary="Get a list of all members of the arc",
+    description="Gets a list of all users that have a membership in your ARC (have a role)",
+    response_description="Array containing every ARC user with details such as the id, name, avatar and more",
+)
 async def getArcUser(
-    request: Request, id: int, data: Annotated[str, Cookie()]
+    request: Request, id: Annotated[int, Query(ge=1)], token: commonToken
 ) -> Users:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
     except:
@@ -207,17 +218,18 @@ async def getArcUser(
 @router.delete(
     "/removeUser",
     summary="Removes a user from the project",
+    description="Removes the user with the given id from your ARC member list",
+    response_description="User {username} was removed successfully!",
 )
 async def removeUser(
     request: Request,
-    id: int,
-    userId: int,
+    id: Annotated[int, Query(ge=1)],
+    userId: Annotated[int, Query(ge=1)],
     username: str,
-    data: Annotated[str, Cookie()],
+    token: commonToken,
 ):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
         }
@@ -264,13 +276,12 @@ async def removeUser(
 @router.put(
     "/editUser",
     summary="Edits a user of the project",
+    description="Change the role of the given member of your ARC to the new role",
+    response_description="User {name} was edited successfully!",
 )
-async def editUser(
-    request: Request, userData: userContent, data: Annotated[str, Cookie()]
-):
+async def editUser(request: Request, userData: userContent, token: commonToken):
     startTime = time.time()
     try:
-        token = getData(data)
         header = {
             "Authorization": "Bearer " + token["gitlab"],
         }
@@ -317,11 +328,15 @@ async def editUser(
 
 
 # returns a list of all groups the user is part of
-@router.get("/getGroups", summary="Get a list of the users groups")
-async def getGroups(request: Request, data: Annotated[str, Cookie()]) -> list:
+@router.get(
+    "/getGroups",
+    summary="Get a list of the users groups",
+    description="If you are member of a group in the datahub you will get an array containing all groups you are a part of",
+    response_description="Array containing the name and id of every group you are a part of",
+)
+async def getGroups(request: Request, token: commonToken) -> list:
     startTime = time.time()
     try:
-        token = getData(data)
         header = {"Authorization": "Bearer " + token["gitlab"]}
         target = getTarget(token["target"])
         # request arc studies

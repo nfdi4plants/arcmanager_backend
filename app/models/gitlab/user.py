@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
-    id: int = Field(examples=[137])
+    id: int = Field(examples=[137], ge=1)
     username: str = Field(examples=["lu98be"])
     name: str = Field(examples=["Your Name"])
     state: str = Field(examples=["active"])
