@@ -299,7 +299,7 @@ async def list_arcs(
 
     arcList = []
 
-    if owned == "true":
+    if owned:
         # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
         try:
             arcs = session.get(
@@ -422,7 +422,14 @@ async def list_arcs(
     summary="Just sends the headers containing the pages count",
     include_in_schema=False,
 )
-async def list_arcs_head(request: Request, token: commonToken, owned=False):
+async def list_arcs_head(
+    request: Request,
+    token: commonToken,
+    owned: Annotated[
+        bool,
+        Query(),
+    ] = False,
+):
     startTime = time.time()
     try:
         header = {"Authorization": "Bearer " + token["gitlab"]}
@@ -442,7 +449,7 @@ async def list_arcs_head(request: Request, token: commonToken, owned=False):
             detail="You are not logged in",
         )
 
-    if owned == "true":
+    if owned:
         # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
         arcs = requests.head(
             f"{os.environ.get(target)}/api/v4/projects?min_access_level=30",
