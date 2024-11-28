@@ -207,7 +207,7 @@ async def createArcJson():
                 return entry
 
     data: list[Projects] = []
-    for datahub in ["Freiburg", "Plantmicrobe", "Tuebingen"]:
+    for datahub in ["freiburg", "plantmicrobe", "tuebingen"]:
 
         projects = await public_arcs(datahub)
         pages = int(projects.headers.get("total-pages"))

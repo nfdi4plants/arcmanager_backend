@@ -33,6 +33,7 @@ import logging
 import time
 
 from cryptography.fernet import Fernet
+from app.models.gitlab.banner import Banner, Banners
 from app.models.gitlab.file import FileContent
 from app.models.gitlab.targets import Targets
 from pdf2image import convert_from_bytes  # type: ignore
@@ -577,8 +578,11 @@ async def public_arcs(
             f"{os.environ.get(target)}/api/v4/projects?page={page}",
             timeout=15,
         )
-        if request.status_code == 502:
+        if request.status_code == 502 or request.status_code == 503:
             raise Exception()
+
+        requestJson = request.json()
+        pages = int(request.headers["X-Total-Pages"])
     except:
         writeLogJson(
             "public_arcs",
@@ -591,21 +595,6 @@ async def public_arcs(
             detail="DataHUB currently not available!!",
         )
 
-    try:
-        requestJson = request.json()
-        pages = int(request.headers["X-Total-Pages"])
-    except:
-        writeLogJson(
-            "public_arcs",
-            500,
-            startTime,
-            f"Error while parsing the list of ARCs!",
-        )
-        raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error while parsing the list of ARCs!",
-        )
-
     if not request.ok:
         writeLogJson(
             "public_arcs",
@@ -614,7 +603,7 @@ async def public_arcs(
             f"Error retrieving the arcs! ERROR: {request.content}",
         )
         raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=request.status_code,
             detail=f"Error retrieving the arcs! ERROR: {request.content}",
         )
 
@@ -2410,3 +2399,76 @@ async def addDatamap(
         startTime,
     )
     return commitRequest.content
+
+
+# get the newest broadcast message (banner) from the gitlab (if its an active message)
+@router.get(
+    "/getBanner",
+    summary="Get the newest banner from the datahub",
+    description="Get a single banner containing the newest broadcasted message from the datahub (if its active)",
+    response_description="JSON containing the message, start time and more.",
+    status_code=status.HTTP_200_OK,
+)
+async def getBanner(request: Request, token: commonToken) -> Banner | None:
+    startTime = time.time()
+    try:
+        target = getTarget(token["target"])
+    except:
+        logging.warning(f"Client not authorized! Cookies: {request.cookies}")
+        writeLogJson(
+            "addDatamap",
+            401,
+            startTime,
+            f"Client not authorized!",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Not authorized!",
+        )
+
+    # send the data to the repo
+    bannerRequest = requests.get(
+        f"{os.environ.get(target)}/api/v4/broadcast_messages",
+    )
+    if not bannerRequest.ok:
+        logging.error(f"Couldn't get datahub banner! ERROR: {bannerRequest.content}")
+        writeLogJson(
+            "addDatamap",
+            bannerRequest.status_code,
+            startTime,
+            f"Couldn't get datahub banner! ERROR: {bannerRequest.content}",
+        )
+        raise HTTPException(
+            status_code=bannerRequest.status_code,
+            detail=f"Couldn't receive newest Datahub banner! Error: {bannerRequest.content}",
+        )
+
+    try:
+        banners = Banners(banners=bannerRequest.json())
+
+        for entry in banners.banners:
+            if entry.active:
+                writeLogJson(
+                    "getBanner",
+                    200,
+                    startTime,
+                )
+                return entry
+        writeLogJson(
+            "getBanner",
+            200,
+            startTime,
+        )
+        return None
+    except Exception as e:
+        logging.error(f"Couldn't get datahub banner! ERROR: {e}")
+        writeLogJson(
+            "addDatamap",
+            500,
+            startTime,
+            f"Couldn't get datahub banner! ERROR: {e}",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't receive newest Datahub banner!",
+        )
