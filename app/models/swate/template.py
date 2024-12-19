@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 
 class Value(BaseModel):
     annotationValue: str
-    termSource: str
-    termAccession: str
+    termSource: Optional[str] = ""
+    termAccession: Optional[str] = ""
 
 
 class HeaderItem(BaseModel):

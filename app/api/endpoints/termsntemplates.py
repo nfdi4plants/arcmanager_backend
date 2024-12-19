@@ -8,7 +8,9 @@ import uuid
 from fastapi import (
     APIRouter,
     Cookie,
+    Depends,
     HTTPException,
+    Query,
     status,
     Response,
     Request,
@@ -27,11 +29,13 @@ router = APIRouter()
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     format="%(asctime)s-%(levelname)s-%(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
     level=logging.DEBUG,
 )
+
+commonToken = Annotated[str, Depends(getData)]
 
 
 # sends back the list of templates used by the swate alpha
@@ -39,6 +43,8 @@ logging.basicConfig(
     "/getTemplates",
     summary="Retrieve a list of swate templates",
     status_code=status.HTTP_200_OK,
+    description="Get a list of all currently available templates",
+    response_description="Array containing all templates with detailed information, such as name, description, table layout, author etc.",
 )
 async def getTemplates() -> Templates:
     startTime = time.time()
@@ -117,6 +123,8 @@ async def getTemplates() -> Templates:
     "/getTemplate",
     summary="Retrieve the specific template",
     status_code=status.HTTP_200_OK,
+    deprecated=True,
+    include_in_schema=False,
 )
 async def getTemplate(id: str) -> TemplateBB:
     startTime = time.time()
@@ -161,44 +169,31 @@ async def getTemplate(id: str) -> TemplateBB:
 # gets a list of fitting terms for the given input, parent name and accession
 @router.get(
     "/getTerms",
-    summary="Retrieve Terms for the given query and parent term",
+    summary="Retrieve Terms for the given query",
     status_code=status.HTTP_200_OK,
+    description="Get a list of all available terms for the given query",
+    response_description="Array containing up to 50 terms related to the input query with name, description, ontology reference and more.",
 )
 async def getTerms(
     input: str,
-    parentName: str = "",
-    parentTermAccession="",
-    advanced=True,
 ) -> Terms:
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
-        # if there is an extended search requested, make an advanced search call
-        if advanced == "true":
-            request = requests.post(
-                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerms",
-                data=json.dumps([{"limit": 50, "ontologies": [], "query": input}]),
-                timeout=10,
-            )
-            logging.debug(f"Getting an extended list of terms for the input '{input}'!")
-        else:
-            # default is an request call containing the parentTerm values
-            request = requests.post(
-                "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTermsByParent",
-                data=json.dumps(
-                    [
-                        {
-                            "limit": 50,
-                            "parentTAN": parentTermAccession,
-                            "query": input,
-                        }
-                    ]
-                ),
-                timeout=7,
-            )
-            logging.debug(
-                f"Getting an specific list of terms for the input '{input}' with parent '{parentName}'!"
-            )
+        request = requests.post(
+            "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerm",
+            data=json.dumps(
+                [
+                    {
+                        "limit": 50,
+                        "query": input,
+                    }
+                ]
+            ),
+            timeout=10,
+        )
+        logging.debug(f"Getting a list of terms for the input '{input}'!")
+
         try:
             termJson = request.json()
         except:
@@ -249,8 +244,10 @@ async def getTerms(
 
 @router.get(
     "/getTermSuggestionsByParentTerm",
-    summary="Retrieve Term suggestions for the given parent term",
+    summary="Retrieve Term suggestions for the given query and parent term",
     status_code=status.HTTP_200_OK,
+    description="Get a list of all available terms for the given query in relation to the parentTermAccession value",
+    response_description="Array containing terms related to the input query and parent accession with name, description, ontology reference and more.",
 )
 async def getTermSuggestionsByParentTerm(
     parentName: str, parentTermAccession: str
@@ -330,6 +327,7 @@ async def getTermSuggestionsByParentTerm(
     "/getTermSuggestions",
     summary="Retrieve Term suggestions by given input",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def getTermSuggestions(input: str, n=20) -> Terms:
     startTime = time.time()
@@ -406,13 +404,12 @@ async def getTermSuggestions(input: str, n=20) -> Terms:
     "/saveSheet",
     summary="Update or save changes to a sheet",
     status_code=status.HTTP_200_OK,
+    description="Create/Update a new swate annotation sheet containing the table data given in the request body. The layout is structured columnwise, meaning the first array in tablehead array adresses the first column and so on.",
+    response_description="Response of the commit from Gitlab.",
 )
-async def saveSheet(
-    request: Request, content: sheetContent, data: Annotated[str, Cookie()]
-):
+async def saveSheet(request: Request, content: sheetContent, token: commonToken):
     startTime = time.time()
     try:
-        token = getData(data)
         target = token["target"]
 
         path = content.path
@@ -435,7 +432,7 @@ async def saveSheet(
         )
 
     # get the file in the backend
-    await arc_file(projectId, path, request, data)
+    await arc_file(projectId, path, request, token)
 
     pathName = f"{os.environ.get('BACKEND_SAVE')}{target}-{projectId}/{path}"
 
@@ -450,7 +447,7 @@ async def saveSheet(
 
     # send the edited file back to gitlab
     response = await commitFile(
-        request, projectId, path, data, pathName, message=name, branch=branch
+        request, projectId, path, token, pathName, message=name, branch=branch
     )
     writeLogJson("saveSheet", 200, startTime)
     return str(response)
@@ -460,28 +457,20 @@ async def saveSheet(
     "/getSheets",
     summary="Get the different annotation metadata sheets of an isa file",
     status_code=status.HTTP_200_OK,
+    description="Get a list containing the different swate sheets and a list containing their names.",
+    response_description="Two lists, one containing the different swate sheets data and one list containing their different names",
 )
 async def getSheets(
-    request: Request, path: str, id, data: Annotated[str, Cookie()], branch="main"
+    request: Request,
+    path: str,
+    id: Annotated[int, Query(ge=1)],
+    token: commonToken,
+    branch: str = "main",
 ) -> tuple[list, list[str]]:
     startTime = time.time()
-    try:
-        token = getData(data)
-    except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
-        writeLogJson(
-            "getSheets",
-            401,
-            startTime,
-            f"No authorized Cookie found!",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
-        )
 
     # get the file in the backend
-    await arc_file(id, path, request, data, branch)
+    await arc_file(id, path, request, token, branch)
 
     # construct path to the backend
     pathName = f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{id}/{path}"
@@ -493,7 +482,9 @@ async def getSheets(
 @router.put(
     "/saveTemplate",
     summary="Update or save changes to a template",
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_204_NO_CONTENT,
+    description="If you use the template editor or upload a custom made template through this endpoint it will be stored in the backend storage and is available through the /getTemplates endpoint later on",
+    response_description="Empty response",
 )
 async def saveTemplate(request: Request, content: templateContent):
     startTime = time.time()

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 
 from app.api.endpoints import (
+    filesnfolders,
     projects,
     authentication,
     termsntemplates,
@@ -15,6 +16,9 @@ api_router = APIRouter(prefix="/arcmanager/api/v1")
 
 
 api_router.include_router(projects.router, prefix="/projects", tags=["Projects"])
+api_router.include_router(
+    filesnfolders.router, prefix="/fnf", tags=["Files and Folders"]
+)
 api_router.include_router(
     termsntemplates.router, prefix="/tnt", tags=["Terms and Templates"]
 )

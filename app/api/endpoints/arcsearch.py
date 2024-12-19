@@ -21,7 +21,7 @@ router = APIRouter()
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     format="%(asctime)s-%(levelname)s-%(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
     level=logging.DEBUG,
@@ -183,9 +183,14 @@ async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
     summary="Creates a json containing all publicly available Arcs",
     include_in_schema=True,
     status_code=status.HTTP_201_CREATED,
+    description="Iterates through all available datahubs and creates a JSON containing information about all publicly available projects and ARCs (this process takes a while and should not be spammed!)",
+    response_description="Large JSON file containing information about every publicly available ARC",
 )
 async def createArcJson():
     fullProjects = []
+    currentData = []
+    with open("searchableArcs.json", "r", encoding="utf8") as old:
+        currentData = json.load(old)
 
     def formatTimeString(time: str) -> str:
         parts = time.split("T")
@@ -196,8 +201,13 @@ async def createArcJson():
 
         return date + " " + time
 
+    def findArc(arc: Projects, searchList: list[Projects]) -> Projects:
+        for entry in searchList:
+            if arc.id == entry["id"] and arc.name == entry["name"]:
+                return entry
+
     data: list[Projects] = []
-    for datahub in ["Freiburg", "Plantmicrobe", "Tuebingen"]:
+    for datahub in ["freiburg", "plantmicrobe", "tuebingen"]:
 
         projects = await public_arcs(datahub)
         pages = int(projects.headers.get("total-pages"))
@@ -208,41 +218,74 @@ async def createArcJson():
             data += Projects(projects=json.loads(projects.body)["projects"]).projects
 
         for i, arc in enumerate(data):
-            investData = await getInvestData(arc.id, datahub, arc.default_branch)
+            if arc.last_activity_at.startswith("2024-11"):
 
-            fullProjects.append(
-                {
-                    "datahub": datahub,
-                    "id": arc.id,
-                    "name": arc.name,
-                    "description": arc.description,
-                    "topics": arc.topics,
-                    "author": {
-                        "name": arc.namespace.name,
-                        "username": arc.namespace.full_path,
-                    },
-                    "created_at": formatTimeString(arc.created_at),
-                    "last_activity": formatTimeString(arc.last_activity_at),
-                    "license": await getLicenseData(arc.id, datahub),
-                    "identifier": investData[0],
-                    "url": arc.http_url_to_repo,
-                    "assay_study_relation": await getAssayStudyRel(
-                        arc.id, datahub, arc.default_branch
-                    ),
-                    "contacts": investData[1],
-                    "publications": investData[2],
-                }
-            )
+                investData = await getInvestData(arc.id, datahub, arc.default_branch)
+
+                fullProjects.append(
+                    {
+                        "datahub": datahub,
+                        "id": arc.id,
+                        "name": arc.name,
+                        "description": arc.description,
+                        "topics": arc.topics,
+                        "author": {
+                            "name": arc.namespace.name,
+                            "username": arc.namespace.full_path,
+                        },
+                        "created_at": formatTimeString(arc.created_at),
+                        "last_activity": formatTimeString(arc.last_activity_at),
+                        "license": await getLicenseData(arc.id, datahub),
+                        "identifier": investData[0],
+                        "url": arc.http_url_to_repo,
+                        "assay_study_relation": await getAssayStudyRel(
+                            arc.id, datahub, arc.default_branch
+                        ),
+                        "contacts": investData[1],
+                        "publications": investData[2],
+                    }
+                )
+            else:
+                oldArcData = findArc(arc, currentData)
+                if oldArcData is not None:
+                    fullProjects.append(oldArcData)
+                else:
+                    fullProjects.append(
+                        {
+                            "datahub": datahub,
+                            "id": arc.id,
+                            "name": arc.name,
+                            "description": arc.description,
+                            "topics": arc.topics,
+                            "author": {
+                                "name": arc.namespace.name,
+                                "username": arc.namespace.full_path,
+                            },
+                            "created_at": formatTimeString(arc.created_at),
+                            "last_activity": formatTimeString(arc.last_activity_at),
+                            "license": await getLicenseData(arc.id, datahub),
+                            "identifier": investData[0],
+                            "url": arc.http_url_to_repo,
+                            "assay_study_relation": await getAssayStudyRel(
+                                arc.id, datahub, arc.default_branch
+                            ),
+                            "contacts": investData[1],
+                            "publications": investData[2],
+                        }
+                    )
 
     with open("searchableArcs.json", "w", encoding="utf8") as f:
         json.dump(fullProjects, f, ensure_ascii=False)
     f.close()
+    old.close()
     return fullProjects
 
 
 @router.get(
     "/getArcJson",
     summary="Get the json containing information about all public arcs",
+    description="Gets the current JSON containing the information about all public ARCs (this is not updating the data; for updated data use /createArcJson)",
+    response_description="Large JSON file containing information about every publicly available ARC",
 )
 async def getArcJson():
     data = []
@@ -255,5 +298,5 @@ async def getArcJson():
         raise HTTPException(
             status_code=500, detail="Error reading the Arcs Json. Try recreating it!"
         )
-
+    logging.info("Sent arcsearch json list!")
     return data

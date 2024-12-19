@@ -6,6 +6,7 @@ from fastapi import (
     Cookie,
     Depends,
     HTTPException,
+    Query,
     status,
     Response,
     Request,
@@ -15,39 +16,38 @@ from fastapi import (
 import json
 import os
 import requests
+import re
 
-import logging
 import time
 import datetime
 
 from app.models.gitlab.arc import Arc
-
 from app.api.endpoints.projects import (
     arc_file,
+    commitFile,
     arc_path,
     arc_tree,
     getAssays,
+    getData,
     getStudies,
     writeLogJson,
 )
 
 router = APIRouter()
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="w",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
+commonToken = Annotated[str, Depends(getData)]
 
 
 # validates the arc
 @router.get(
     "/validateArc",
     summary="Validates the ARC",
+    description="Validates the ARC by checking if all necessary folders are present, the investigation has a title, description and all contacts have the necessary fields filled out.",
+    response_description="Dictionary containing the individual results of the different checks containing information whether they were successful or what is missing in your ARC",
 )
-async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()]):
+async def validateArc(
+    request: Request, id: Annotated[int, Query(ge=1)], token: commonToken
+):
     # this is for measuring the response time of the api
     startTime = time.time()
 
@@ -55,14 +55,14 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
     fullValidArc = True
 
     # get the json of the ground arc structure
-    arc: Arc = await arc_tree(id, data, request)
+    arc: Arc = await arc_tree(id, token, request)
 
     # setup a dict containing the results of the different tests
     valid = {"Assays": [], "Studies": []}
 
     arcContent = checkContent(
         arc,
-        ["studies", "assays", "workflows", "runs", "isa.investigation.xlsx", ".arc"],
+        ["studies", "assays", "workflows", "runs", "isa.investigation.xlsx"],
     )
 
     if isinstance(arcContent, str):
@@ -73,12 +73,12 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
 
     ## here we start checking the assays and studies
     # first we get a list of names for the assays and studies
-    assays = await getAssays(request, id, data)
-    studies = await getStudies(request, id, data)
+    assays = await getAssays(request, id, token)
+    studies = await getStudies(request, id, token)
 
     # here we check the content of every assay for whether the folders "dataset" and "protocols are present", as well if the assay file is present
     for entry in assays:
-        assay = await arc_path(id, request, f"assays/{entry}", data)
+        assay = await arc_path(id, request, f"assays/{entry}", token)
 
         assayContent = checkContent(
             Arc(Arc=json.loads(assay.body)["Arc"]),
@@ -90,7 +90,7 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
         valid["Assays"].append({entry: assayContent})
     # here we check the content of every study whether the folders "resources" and "protocols are present", as well if the study file is present
     for entry in studies:
-        study = await arc_path(id, request, f"studies/{entry}", data)
+        study = await arc_path(id, request, f"studies/{entry}", token)
 
         studyContent = checkContent(
             Arc(Arc=json.loads(study.body)["Arc"]),
@@ -105,18 +105,16 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
             }
         )
 
-    validInvest = await validateInvestigation(request, id, data)
+    validInvest = await validateInvestigation(request, id, token)
 
     for entry in validInvest:
         if isinstance(validInvest[entry], list):
             for contact in validInvest[entry]:
                 if isinstance(contact, str):
-                    print(contact)
                     fullValidArc = False
                     break
         else:
             if not validInvest[entry]:
-                print(entry)
                 fullValidArc = False
                 break
 
@@ -133,16 +131,21 @@ async def validateArc(request: Request, id: int, data: Annotated[str, Cookie()])
 
 
 # validate the investigation file
-@router.get("/validateInvest", summary="Validates the Investigation file of the ARC")
+@router.get(
+    "/validateInvest",
+    summary="Validates the Investigation file of the ARC",
+    description="Validates the investigation file by checking whether all necessary fields are filled out, such as title and description",
+    response_description="Dictionary containing information about every necessary field and if they are filled out properly",
+)
 async def validateInvestigation(
-    request: Request, id: int, data: Annotated[str, Cookie()]
+    request: Request, id: Annotated[int, Query(ge=1)], token: commonToken
 ) -> dict[str, bool | list]:
     startTime = time.time()
     ## here we start checking the fields of the investigation file
     # to check the content of the investigation file, we first need to retrieve it
     try:
         investigation: list = await arc_file(
-            id, "isa.investigation.xlsx", request, data
+            id, "isa.investigation.xlsx", request, token
         )
     except:
         writeLogJson("validateInvest", 404, startTime, "No investigation found!")
@@ -151,6 +154,7 @@ async def validateInvestigation(
             "title": False,
             "description": False,
             "contacts": [],
+            "dates": [],
         }
     # a first structure to check the basic investigation identifier
     investSection: dict[str, bool | list] = {
@@ -162,7 +166,13 @@ async def validateInvestigation(
         "description": isinstance(
             getField(investigation, "Investigation Description")[1], str
         ),
-        "contacts": await validateContacts(request, id, data),
+        "contacts": await validateContacts(request, id, token),
+        "submissionDate": valiDate(
+            getField(investigation, "Investigation Submission Date")[1]
+        ),
+        "releaseDate": valiDate(
+            getField(investigation, "Investigation Public Release Date")[1]
+        ),
     }
     writeLogJson("validateInvest", 200, startTime)
     return investSection
@@ -170,13 +180,13 @@ async def validateInvestigation(
 
 # validates title, description and identifier in a study (UNUSED)
 async def validateStudy(
-    request: Request, id: int, path: str, data: Annotated[str, Cookie()]
+    request: Request, id: int, path: str, token: commonToken
 ) -> dict[str, bool]:
     startTime = time.time()
     ## here we start checking the fields of the investigation file
     # to check the content of the investigation file, we first need to retrieve it
     try:
-        study: list = await arc_file(id, f"{path}/isa.study.xlsx", request, data)
+        study: list = await arc_file(id, f"{path}/isa.study.xlsx", request, token)
     except:
         writeLogJson("validateStudy", 404, startTime, "No study found!")
         raise HTTPException(
@@ -194,12 +204,10 @@ async def validateStudy(
     return studySection
 
 
-async def validateContacts(
-    request: Request, id: int, data: Annotated[str, Cookie()]
-) -> list:
+async def validateContacts(request: Request, id: int, token: commonToken) -> list:
     try:
         investigation: list = await arc_file(
-            id, "isa.investigation.xlsx", request, data
+            id, "isa.investigation.xlsx", request, token
         )
     except:
         raise HTTPException(
@@ -214,6 +222,10 @@ async def validateContacts(
     lastName = getField(investigation, "Investigation Person Last Name")[counter]
 
     while isinstance(lastName, str) and lastName != "":
+        try:
+            orcid = getField(investigation, "Comment[ORCID]")[counter]
+        except:
+            orcid = ""
         firstName = getField(investigation, "Investigation Person First Name")[counter]
         email = getField(investigation, "Investigation Person Email")[counter]
         affiliation = getField(investigation, "Investigation Person Affiliation")[
@@ -226,7 +238,11 @@ async def validateContacts(
             if isinstance(email, str) and validMail(email):
                 # check affiliation
                 if isinstance(affiliation, str) and affiliation != "":
-                    contacts.append(True)
+                    # check orcid
+                    if isinstance(orcid, str) and validORCID(orcid):
+                        contacts.append(True)
+                    else:
+                        contacts.append("ORCID is missing or not valid!")
                 else:
                     contacts.append("Affiliation is missing!")
             else:
@@ -271,11 +287,11 @@ def getField(isaFile: list, fieldName: str) -> list:
 
 
 # validates a date value
-def valiDate(date: str) -> bool:
+def valiDate(date: str) -> bool | str:
     try:
         datetime.datetime.fromisoformat(date)
     except:
-        return False
+        return "Date invalid!"
     return True
 
 
@@ -283,5 +299,14 @@ def valiDate(date: str) -> bool:
 def validMail(email: str) -> bool:
     try:
         return not re.match(r"[^@]+@[^@]+\.[^@]+", email) is None
+    except:
+        return False
+
+
+# validates an ORCID by number of digits and dashes. VERY BASIC!
+# TODO: Check an actual ORCID db --> Could lead to performance drop
+def validORCID(orcid: str) -> bool:
+    try:
+        return not re.match(r"\d{4}-\d{4}-\d{4}-\d{4}", orcid) is None
     except:
         return False

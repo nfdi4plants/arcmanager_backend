@@ -3,25 +3,41 @@
 ## DONE basic criteria
 
 Do files/folders exist? (content doesn't matter for now)
-- investigation.xlsx (redundant)
-- assays
-- studies
-- workflows
-- runs
-- .arc
+
+- [x] investigation.xlsx (redundant)
+- [x] assays
+- [x] studies
+- [x] workflows
+- [x] runs
+- [x] .arc
+
+investigation.xlsx contents
+
+- [x] Title ("Investigation Title")
+- [x] Description ("Investigation Description")
+- [x] Identifier ("Investigation Identifier")
+- [x] Submission Date ("Investigation Submission Date")
+- [x] Release Date ("Investigation Public Release Date")
 
 ## Implement Basic criteria
 
-Is basic metadata in investigation.xlsx?
-- ORCID (optional)
-- At least one contact obligatory: **Email**, Maybe Name...
-- Affiliation
-- Title
-- Description
-- Identifier
+investigation.xlsx contents
 
-> Seem to be implmeneted in 'arc-validate' in way or another. Check there if unclear how to implement!
+- [ ] ORCID (optional) **Fields missing from investigation.xlsx**
+- [x] Affiliation ("Investigation Person Affiliation")
+- [x] At least one **contact** obligatory: Email ("Investigation Person Email") 
+- [ ] Only if no email: A First and Last Name ("Investigation Person First Name"+"Investigation Person Last Name") also couple it to affiliation
 
-## Advanced
+> Discuss wether this implementation (email/name) is ok...
+
+studies
+
+> What to check?
+
+assays
+
+> What to check?
+
+## Implement Advanced Criteria
 
 Is everything (study, assay, ...) registered in investigation.xlsx?
