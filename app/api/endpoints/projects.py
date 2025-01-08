@@ -80,7 +80,7 @@ retry = Retry(
     total=5,
     backoff_factor=4,
     status_forcelist=[500, 502, 429, 503, 504],
-    allowed_methods=["POST", "PUT", "HEAD"],
+    allowed_methods=["POST", "PUT", "HEAD", "GET"],
 )
 
 adapter = HTTPAdapter(max_retries=retry)
@@ -100,7 +100,7 @@ def sanitizeInput(input: str | list) -> str:
     return input
 
 
-# Match the given target repo with the address name in the env file (default is the gitlab dev server)
+# Match the given target repo with the address name in the env file (default is the tübingen gitlab)
 def getTarget(target: str) -> str:
     match target.lower():
         case "dev":
@@ -295,7 +295,7 @@ async def list_arcs(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not logged in",
+            detail="You are not logged in! Please authorize or refresh session!",
         )
 
     arcList = []
@@ -447,7 +447,7 @@ async def list_arcs_head(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not logged in",
+            detail="You are not logged in! Please authorize or refresh session!",
         )
 
     if owned:
@@ -648,7 +648,7 @@ async def arc_tree(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC",
+            detail="You are not authorized to view this ARC! Please authorize or refresh session!",
         )
 
     arc = requests.get(
@@ -717,7 +717,7 @@ async def arc_path(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC",
+            detail="You are not authorized to view this ARC! Please authorize or refresh session!",
         )
 
     try:
@@ -799,11 +799,11 @@ async def arc_file(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to get this file",
+            detail="You are not authorized to get this file! Please authorize or refresh session!",
         )
     # get HEAD data for fileSize
     # url encode the path
-    fileHead = requests.head(
+    fileHead = session.head(
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
         headers=header,
     )
@@ -832,7 +832,7 @@ async def arc_file(
         total=5,
         backoff_factor=4,
         status_forcelist=[500, 400, 502, 429, 503, 504, 404],
-        allowed_methods=["POST", "PUT", "HEAD"],
+        allowed_methods=["POST", "PUT", "HEAD", "GET"],
     )
 
     altAdapter = HTTPAdapter(max_retries=altRetry)
@@ -1222,7 +1222,7 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Please login to create a new ARC",
+            detail="Please login to create a new ARC or refresh the session!",
         )
     # read out the new arc properties
     try:
@@ -1479,7 +1479,7 @@ async def repairArc(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Please login to create a new ARC",
+            detail="Please login to repair the ARC or refresh the session!",
         )
 
     # read out the new arc properties
@@ -1651,7 +1651,8 @@ async def createIsa(request: Request, isaContent: newIsa, token: commonToken):
             f"Client not authorized to create new ISA!",
         )
         raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to create new ISA! Please authorize or refresh session!",
         )
 
     # load the isa properties
@@ -1933,7 +1934,7 @@ async def getStudies(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     writeLogJson("getStudies", 200, startTime)
@@ -1965,7 +1966,7 @@ async def getAssays(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     writeLogJson("getAssays", 200, startTime)
@@ -1998,7 +1999,7 @@ async def syncAssay(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # get the necessary information from the request
@@ -2068,7 +2069,7 @@ async def syncAssay(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="No authorized session cookie found",
+            detail="No authorized session cookie found! Please authorize or refresh session!",
         )
 
     logging.info(f"Sent file {pathToStudy} to ARC {id}")
@@ -2101,7 +2102,7 @@ async def syncStudy(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # get the necessary information from the request
@@ -2173,7 +2174,7 @@ async def syncStudy(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="No authorized session cookie found",
+            detail="No authorized session cookie found! Please authorize or refresh session!",
         )
 
     logging.info(f"Sent file isa.investigation.xlsx to ARC {id}")
@@ -2268,7 +2269,7 @@ async def getBranches(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC",
+            detail="You are not authorized to view this ARC! Please authorize or refresh session!",
         )
     try:
         # request branches
@@ -2288,7 +2289,7 @@ async def getBranches(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
     writeLogJson("getBranches", 200, startTime)
     try:
@@ -2326,7 +2327,7 @@ async def addDatamap(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized to create new datamap",
+            detail="Not authorized to create new datamap! Please authorize or refresh session!",
         )
 
     # load the isa properties
@@ -2423,7 +2424,7 @@ async def getBanner(request: Request, token: commonToken) -> Banner | None:
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized!",
+            detail="Not authorized! Please authorize or refresh session!",
         )
 
     # send the data to the repo

@@ -321,7 +321,7 @@ async def uploadFile(
                     )
                     raise HTTPException(
                         status_code=HTTP_401_UNAUTHORIZED,
-                        detail="Not authorized to upload a File! Log in again!",
+                        detail="Not authorized to upload a File! Log in again or refresh the session!",
                     )
                 logging.debug("Uploading file to lfs...")
                 try:
@@ -850,7 +850,7 @@ async def deleteFile(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to delete this file",
+            detail="You are not authorized to delete this file! Please authorize or refresh session!",
         )
 
     payload = {"branch": branch, "commit_message": "Delete file " + path}
@@ -913,7 +913,7 @@ async def deleteFolder(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to delete this folder",
+            detail="You are not authorized to delete this folder! Please authorize or refresh session!",
         )
 
     # get the number of pages
@@ -1018,7 +1018,7 @@ async def createFolder(request: Request, folder: folderContent, token: commonTok
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized to create new folder",
+            detail="Not authorized to create new folder! Please authorize or refresh session!",
         )
 
     # load the properties
@@ -1116,7 +1116,7 @@ async def renameFolder(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to rename this folder",
+            detail="You are not authorized to rename this folder! Please authorize or refresh session!",
         )
 
     oldName = ""

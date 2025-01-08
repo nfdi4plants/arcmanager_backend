@@ -218,7 +218,7 @@ async def createArcJson():
             data += Projects(projects=json.loads(projects.body)["projects"]).projects
 
         for i, arc in enumerate(data):
-            if arc.last_activity_at.startswith("2024-11"):
+            if arc.last_activity_at.startswith("2025"):
 
                 investData = await getInvestData(arc.id, datahub, arc.default_branch)
 

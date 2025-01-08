@@ -54,7 +54,7 @@ async def getUser(request: Request, token: commonToken) -> Users:
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     userList = []
@@ -118,7 +118,7 @@ async def addUser(request: Request, userData: userContent, token: commonToken):
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # get the id and name of the user
@@ -179,7 +179,7 @@ async def getArcUser(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # request to get all users for the specific arc
@@ -244,7 +244,7 @@ async def removeUser(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # request to delete the given user
@@ -296,7 +296,7 @@ async def editUser(request: Request, userData: userContent, token: commonToken):
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     id = userData.id
@@ -355,7 +355,7 @@ async def getGroups(request: Request, token: commonToken) -> list:
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
     try:
         groupsJson = groups.json()
