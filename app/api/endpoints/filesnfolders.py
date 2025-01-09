@@ -687,110 +687,133 @@ async def uploadFile(
 
         # if its a regular upload without git-lfs
         else:
-            try:
-                # check if file already exists
-                fileHead = session.head(
-                    f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-                    headers=header,
-                )
-            except Exception as e:
-                logging.error(e)
-                writeLogJson("uploadFile", 504, startTime, e)
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail=f"Couldn't upload file to repo! Error: {e}",
-                )
+            for x in range(0, 3):
+                # sleep for 10 secs increasing for each retry
+                time.sleep(x * 10)
+                if x > 0:
+                    logging.debug("Retry " + str(x) + " for file: " + name)
 
-            # if file doesn't exist, upload file
-            if not fileHead.ok:
-                # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
-                payload = {
-                    "branch": str(branch),
-                    # base64 encoding of the isa file
-                    "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Upload of new File {name}",
-                    "encoding": "base64",
-                }
+                ### Start upload process ###
                 try:
-                    # create the file on the gitlab
-                    request = session.post(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                        data=json.dumps(payload),
+                    # check if file already exists
+                    fileHead = session.head(
+                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
                         headers=header,
                     )
                 except Exception as e:
                     logging.error(e)
-                    request = requests.post(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                        data=json.dumps(payload),
-                        headers=header,
+                    writeLogJson("uploadFile", 504, startTime, e)
+                    raise HTTPException(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        detail=f"Couldn't upload file to repo! Error: {e}",
                     )
-                    if not request.ok:
-                        logging.error(f"Couldn't upload file! ERROR: {request.content}")
+
+                # if file doesn't exist, upload file
+                if not fileHead.ok:
+                    # gitlab needs to know the branch, the base64 encoded content, a commit message and the format of the encoding (normally base64)
+                    payload = {
+                        "branch": str(branch),
+                        # base64 encoding of the isa file
+                        "content": base64.b64encode(fullData).decode("utf-8"),
+                        "commit_message": f"Upload of new File {name}",
+                        "encoding": "base64",
+                    }
+                    try:
+                        # create the file on the gitlab
+                        uploadResponse = session.post(
+                            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                            data=json.dumps(payload),
+                            headers=header,
+                        )
+                    except Exception as e:
+                        logging.error(e)
+                        uploadResponse = requests.post(
+                            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                            data=json.dumps(payload),
+                            headers=header,
+                        )
+                    if not uploadResponse.ok and uploadResponse.status_code != 400:
+                        logging.error(
+                            f"Couldn't upload file! ERROR: {uploadResponse.content}"
+                        )
                         writeLogJson(
                             "uploadFile",
                             504,
                             startTime,
-                            f"Couldn't upload file! ERROR: {request.content}",
+                            f"Couldn't upload file! ERROR: {uploadResponse.content}",
                         )
                         raise HTTPException(
                             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {request.content}",
+                            detail=f"Couldn't upload file to repo! Error: {uploadResponse.content}",
                         )
 
-                statusCode = status.HTTP_201_CREATED
+                    statusCode = status.HTTP_201_CREATED
 
-            # if file already exists, update the file
-            else:
-                payload = {
-                    "branch": branch,
-                    # base64 encoding of the isa file
-                    "content": base64.b64encode(fullData).decode("utf-8"),
-                    "commit_message": f"Updating File {name}",
-                    "encoding": "base64",
-                }
+                # if file already exists, update the file
+                else:
+                    payload = {
+                        "branch": branch,
+                        # base64 encoding of the isa file
+                        "content": base64.b64encode(fullData).decode("utf-8"),
+                        "commit_message": f"Updating File {name}",
+                        "encoding": "base64",
+                    }
 
-                try:
-                    # update the file to the gitlab
-                    request = session.put(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                        data=json.dumps(payload),
-                        headers=header,
-                    )
-                except Exception as e:
-                    logging.error(e)
-                    # update the file to the gitlab
-                    request = session.put(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                        data=json.dumps(payload),
-                        headers=header,
-                    )
-                    if not request.ok:
-                        logging.error(f"Couldn't upload file! ERROR: {request.content}")
+                    try:
+                        # update the file to the gitlab
+                        uploadResponse = session.put(
+                            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                            data=json.dumps(payload),
+                            headers=header,
+                        )
+                    except Exception as e:
+                        logging.error(e)
+                        # update the file to the gitlab
+                        uploadResponse = session.put(
+                            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
+                            data=json.dumps(payload),
+                            headers=header,
+                        )
+                    if not uploadResponse.ok and uploadResponse.status_code != 400:
+                        logging.error(
+                            f"Couldn't upload file! ERROR: {uploadResponse.content}"
+                        )
                         writeLogJson(
                             "uploadFile",
                             504,
                             startTime,
-                            f"Couldn't upload file! ERROR: {request.content}",
+                            f"Couldn't upload file! ERROR: {uploadResponse.content}",
                         )
                         raise HTTPException(
                             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {request.content}",
+                            detail=f"Couldn't upload file to repo! Error: {uploadResponse.content}",
                         )
 
-                statusCode = status.HTTP_200_OK
+                    statusCode = status.HTTP_200_OK
 
-            logging.debug("Uploading file to repo...")
-            if not request.ok:
-                try:
-                    requestJson = request.json()
-                except:
-                    requestJson = request.content
-                logging.error(f"Couldn't upload to ARC! ERROR: {request.content}")
-                raise HTTPException(
-                    status_code=request.status_code,
-                    detail=f"Couldn't upload file to repo! Error: {requestJson}",
-                )
+                # if file is available, break loop
+                if uploadResponse.ok:
+                    logging.debug(f"Upload of file {name} successful")
+                    break
+
+                # return exception if upload failed after 3 tries
+                if x >= 2 and uploadResponse.status_code == 400:
+                    logging.error(
+                        "File "
+                        + path
+                        + " failed to upload after three tries! ERROR: "
+                        + {uploadResponse.content}
+                    )
+                    writeLogJson(
+                        "uploadFile",
+                        500,
+                        startTime,
+                        f"Couldn't upload to ARC after three tries! ERROR: {uploadResponse.content}",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="File " + path + " could not be uploaded! Try again!",
+                    )
 
             # logging
             logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")

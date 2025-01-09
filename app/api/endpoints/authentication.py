@@ -202,6 +202,7 @@ async def callback(request: Request, datahub: str):
         httponly=True,
         secure=True,
         samesite="strict",
+        path="/arcmanager/api",
     )
     response.set_cookie("logged_in", "true", httponly=False)
     response.set_cookie("timer", time.time(), httponly=False)
@@ -236,7 +237,7 @@ async def logout(request: Request):
     response = Response("logout successful", media_type="text/plain")
 
     # if the user logs out, delete the "data" cookie containing the gitlab token, as well as the other cookies set
-    response.delete_cookie("data")
+    response.delete_cookie("data", path="/arcmanager/api")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
     response.delete_cookie("timer")
@@ -279,7 +280,7 @@ async def refresh(data: Annotated[str, Cookie()]):
             detail=f"Could not refresh access token! Please login again!",
         )
 
-    response = Response("Your refresh was successful!", media_type="text/plain")
+    response = Response("Session refresh was successful!", media_type="text/plain")
 
     # application id and secret for the datahub
     app_id = os.environ.get(f"{target.upper()}_CLIENT_ID")
@@ -327,6 +328,7 @@ async def refresh(data: Annotated[str, Cookie()]):
             httponly=True,
             secure=True,
             samesite="strict",
+            path="/arcmanager/api",
         )
         response.set_cookie("timer", time.time(), httponly=False)
         writeLogJson("refresh", 200, startTime)
