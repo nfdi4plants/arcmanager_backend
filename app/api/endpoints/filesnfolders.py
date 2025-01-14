@@ -459,10 +459,7 @@ async def uploadFile(
                     # return exception if upload failed after 3 tries
                     if x >= 2 and response.status_code == 400:
                         logging.error(
-                            "File "
-                            + path
-                            + " failed to upload after three tries! ERROR: "
-                            + {response.content}
+                            f"File {path} failed to upload after three tries! ERROR: {response.content}"
                         )
                         writeLogJson(
                             "uploadFile",
@@ -472,9 +469,7 @@ async def uploadFile(
                         )
                         raise HTTPException(
                             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="File "
-                            + path
-                            + " could not be uploaded! Try again!",
+                            detail=f"File {name} failed to upload after three tries! ERROR: {response.content}",
                         )
 
                     if response.ok:
@@ -791,7 +786,7 @@ async def uploadFile(
 
                     statusCode = status.HTTP_200_OK
 
-                # if file is available, break loop
+                # if file was uploaded, break the loop
                 if uploadResponse.ok:
                     logging.debug(f"Upload of file {name} successful")
                     break
@@ -799,10 +794,7 @@ async def uploadFile(
                 # return exception if upload failed after 3 tries
                 if x >= 2 and uploadResponse.status_code == 400:
                     logging.error(
-                        "File "
-                        + path
-                        + " failed to upload after three tries! ERROR: "
-                        + {uploadResponse.content}
+                        f"File {path} failed to upload after three tries! ERROR: {uploadResponse.content}"
                     )
                     writeLogJson(
                         "uploadFile",
@@ -812,13 +804,13 @@ async def uploadFile(
                     )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="File " + path + " could not be uploaded! Try again!",
+                        detail=f"File {name} failed to upload after three tries! ERROR: {uploadResponse.content}",
                     )
 
             # logging
             logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")
             removeFromGitAttributes(token, id, branch, path)
-            response = Response(request.content, statusCode)
+            response = Response(uploadResponse.content, statusCode)
             writeLogJson(
                 "uploadFile",
                 statusCode,

@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet
 from starlette.responses import HTMLResponse
 from authlib.integrations.starlette_client import OAuth, OAuthError
 
+from app.models.gitlab.input import pat
 from app.models.gitlab.targets import Targets
 
 router = APIRouter()
@@ -171,7 +172,9 @@ async def callback(request: Request, datahub: str):
     except Exception as error:
         print(error)
         response = RedirectResponse(redirect)
-        response.set_cookie("error", "DataHUB not available")
+        response.set_cookie(
+            "error", "DataHUB not available", secure=True, samesite="strict"
+        )
         return response
 
     try:
@@ -204,8 +207,12 @@ async def callback(request: Request, datahub: str):
         samesite="strict",
         path="/arcmanager/api",
     )
-    response.set_cookie("logged_in", "true", httponly=False)
-    response.set_cookie("timer", time.time(), httponly=False)
+    response.set_cookie(
+        "logged_in", "true", httponly=False, secure=True, samesite="strict"
+    )
+    response.set_cookie(
+        "timer", time.time(), httponly=False, secure=True, samesite="strict"
+    )
 
     try:
         username = await getUserName(datahub, userInfo, access_token)
@@ -213,9 +220,13 @@ async def callback(request: Request, datahub: str):
             "username",
             urllib.parse.quote(username),
             httponly=False,
+            secure=True,
+            samesite="strict",
         )
     except:
-        response.set_cookie("username", "user", httponly=False)
+        response.set_cookie(
+            "username", "user", httponly=False, secure=True, samesite="strict"
+        )
     # delete any leftover error cookie
     response.delete_cookie("error")
 
@@ -238,9 +249,12 @@ async def logout(request: Request):
 
     # if the user logs out, delete the "data" cookie containing the gitlab token, as well as the other cookies set
     response.delete_cookie("data", path="/arcmanager/api")
+    # delete the old data cookies as well (those missing the path parameter)
+    response.delete_cookie("data")
     response.delete_cookie("logged_in")
     response.delete_cookie("username")
     response.delete_cookie("timer")
+    response.delete_cookie("pat")
     request.cookies.clear()
     return response
 
@@ -330,7 +344,9 @@ async def refresh(data: Annotated[str, Cookie()]):
             samesite="strict",
             path="/arcmanager/api",
         )
-        response.set_cookie("timer", time.time(), httponly=False)
+        response.set_cookie(
+            "timer", time.time(), httponly=False, secure=True, samesite="strict"
+        )
         writeLogJson("refresh", 200, startTime)
         return response
 
@@ -342,3 +358,59 @@ async def refresh(data: Annotated[str, Cookie()]):
             status_code=refreshRequest.status_code,
             detail=f"Could not refresh access token! Please login again!",
         )
+
+
+@router.put(
+    "/addPAT",
+    summary="Add your personal access token",
+    description="Add your Personal Access Token (PAT) to your session, extending it to the expiration date of your token",
+    response_description="Your PAT was set successfully",
+)
+async def addPAT(data: Annotated[str, Cookie()], pat: pat):
+    startTime = time.time()
+
+    ## Decode Cookie ##
+    # get public key from .env to decode data (in form of a byte string)
+    public_key = (
+        b"-----BEGIN PUBLIC KEY-----\n"
+        + os.environ.get("PUBLIC_RSA").encode()
+        + b"\n-----END PUBLIC KEY-----"
+    )
+    try:
+        decodedToken = jwt.decode(data, public_key, algorithms=["RS256", "HS256"])
+
+    except:
+        writeLogJson("addPAT", 500, startTime, "Could not add PAT!")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not add PAT! Please login again!",
+        )
+
+    response = Response(
+        "Your Personal Access token was added successfully!", media_type="text/plain"
+    )
+
+    # read out private key from .env
+    pr_key = (
+        b"-----BEGIN RSA PRIVATE KEY-----\n"
+        + os.environ.get("PRIVATE_RSA").encode()
+        + b"\n-----END RSA PRIVATE KEY-----"
+    )
+    cookieData = {
+        "gitlab": encryptToken(pat.pat.encode()).decode(),
+        "target": decodedToken["target"],
+        "refresh": decodedToken["refresh"],
+    }
+    # encode cookie data with rsa key
+    encodedCookie = jwt.encode(cookieData, pr_key, algorithm="RS256")
+    response.set_cookie(
+        "data",
+        encodedCookie,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/arcmanager/api",
+    )
+    response.set_cookie("pat", "true", httponly=False, secure=True, samesite="strict")
+    writeLogJson("addPAT", 200, startTime)
+    return response

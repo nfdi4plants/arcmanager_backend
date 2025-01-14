@@ -90,3 +90,8 @@ class datamapContent(BaseModel):
     id: int = Field(examples=[230], ge=1)
     path: str = Field(examples=["assays/assay1/dataset"])
     branch: str = Field(examples=["main"])
+
+
+# personal access token
+class pat(BaseModel):
+    pat: str

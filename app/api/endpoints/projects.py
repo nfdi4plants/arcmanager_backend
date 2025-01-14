@@ -141,7 +141,6 @@ def getData(data: Annotated[str, Cookie()]):
 
     try:
         decodedToken = jwt.decode(data, public_key, algorithms=["RS256", "HS256"])
-
         fernetKey = os.environ.get("FERNET").encode()
         decodedToken["gitlab"] = (
             Fernet(fernetKey).decrypt(decodedToken["gitlab"].encode()).decode()
@@ -1305,7 +1304,9 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
         )
     except Exception as e:
         logging.error(e)
-        writeLogJson("createArc", 500, startTime, e)
+
+    if not branchUnProtect.ok:
+        logging.warning(branchUnProtect.content)
 
     ## commit the folders and the investigation isa to the repo
 
@@ -1443,6 +1444,19 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
             filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
             branch=newArcJson["default_branch"],
         )
+
+        if branchUnProtect.status_code == 404:
+            try:
+                branchUnProtect = requests.delete(
+                    os.environ.get(target)
+                    + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}",
+                    headers=header,
+                )
+            except Exception as e:
+                logging.error(e)
+            if not branchUnProtect.ok:
+                logging.warning(branchUnProtect.content)
+
         writeLogJson("createArc", 201, startTime)
     return [projectPost.content, commitRequest.content]
 
