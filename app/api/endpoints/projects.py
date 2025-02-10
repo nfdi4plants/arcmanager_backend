@@ -122,12 +122,15 @@ def getTarget(target: str) -> str:
 # get the username using the id
 async def getUserName(target: str, userId: int, access_token: str) -> str:
     header = {"Authorization": "Bearer " + access_token}
-    userInfo = requests.get(
-        f"{os.environ.get(getTarget(target))}/api/v4/users/{userId}",
-        headers=header,
-    ).json()
+    try:
+        userInfo = requests.get(
+            f"{os.environ.get(getTarget(target))}/api/v4/users/{userId}",
+            headers=header,
+        ).json()
 
-    return userInfo["name"]
+        return userInfo["name"]
+    except:
+        return "username"
 
 
 # decrypt the cookie data with the corresponding public key
@@ -732,15 +735,23 @@ async def arc_path(
             detail=f"Couldn't retrieve content of the path! Error: {e}",
         )
 
+    # if total pages header is available, forward it
+    try:
+        pages = int(arcPath.headers["X-Total-Pages"])
+        header = {
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        }
+    except:
+        header = {}
+
     try:
         pathJson = arcPath.json()
-        pages = int(arcPath.headers["X-Total-Pages"])
-
     except:
-        pathJson = {
-            "error": "Parsing Error",
-            "error_description": "There was an error parsing the path data for the ARC!",
-        }
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parsing Error! Error: There was an error parsing the path data for the ARC!!",
+        )
 
     # raise error if the given path gives no result
     if not arcPath.ok:
@@ -760,10 +771,7 @@ async def arc_path(
     writeLogJson("arc_path", 200, startTime)
     return JSONResponse(
         jsonable_encoder(Arc(Arc=pathJson)),
-        headers={
-            "total-pages": str(pages),
-            "Access-Control-Expose-Headers": "total-pages",
-        },
+        headers=header,
     )
 
 
@@ -1295,18 +1303,15 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
     # replace empty space with underscores
     investIdentifier = investIdentifier.replace(" ", "_")
 
-    # unprotect the main branch
+    # allow force push
     try:
-        branchUnProtect = requests.delete(
+        branchForcePush = requests.patch(
             os.environ.get(target)
-            + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}",
+            + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}?allow_force_push=true",
             headers=header,
         )
     except Exception as e:
         logging.error(e)
-
-    if not branchUnProtect.ok:
-        logging.warning(branchUnProtect.content)
 
     ## commit the folders and the investigation isa to the repo
 
@@ -1445,17 +1450,15 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
             branch=newArcJson["default_branch"],
         )
 
-        if branchUnProtect.status_code == 404:
-            try:
-                branchUnProtect = requests.delete(
-                    os.environ.get(target)
-                    + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}",
-                    headers=header,
-                )
-            except Exception as e:
-                logging.error(e)
-            if not branchUnProtect.ok:
-                logging.warning(branchUnProtect.content)
+        # allow force push
+        try:
+            branchForcePush = requests.patch(
+                os.environ.get(target)
+                + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}?allow_force_push=true",
+                headers=header,
+            )
+        except Exception as e:
+            logging.error(e)
 
         writeLogJson("createArc", 201, startTime)
     return [projectPost.content, commitRequest.content]

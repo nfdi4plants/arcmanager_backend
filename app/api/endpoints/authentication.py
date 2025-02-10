@@ -56,6 +56,13 @@ oauth.register(
     client_kwargs={"scope": "openid api profile"},
 )
 
+oauth.register(
+    name="fdat",
+    authorize_url="https://fdat.uni-tuebingen.de/oauth/authorize",
+    access_token_url="https://fdat.uni-tuebingen.de/oauth/token ",
+    client_kwargs={"scope": "user:email"},
+)
+
 # backend_address = "http://localhost:8000/arcmanager/api/v1/auth/"
 backend_address = "https://nfdi4plants.de/arcmanager/api/v1/auth/"
 
@@ -136,6 +143,8 @@ async def login(request: Request, datahub: Targets):
             return await oauth.tuebingen_testenv.authorize_redirect(
                 request, redirect_uri
             )
+        elif datahub == "fdat":
+            return await oauth.fdat.authorize_redirect(request, redirect_uri)
         else:
             return "invalid DataHUB selection"
 
@@ -166,6 +175,10 @@ async def callback(request: Request, datahub: str):
             token = await oauth.plantmicrobe.authorize_access_token(request)
         elif datahub == "tuebingen_testenv":
             token = await oauth.tuebingen_testenv.authorize_access_token(request)
+        elif datahub == "fdat":
+            return response
+            token = await oauth.fdat.authorize_access_token(request)
+            print(token)
 
     except OAuthError as error:
         return HTMLResponse(f"<h1>{error}</h1>")
