@@ -1455,14 +1455,15 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
         )
 
         # allow force push
-        try:
-            branchForcePush = requests.patch(
-                os.environ.get(target)
-                + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}?allow_force_push=true",
-                headers=header,
-            )
-        except Exception as e:
-            logging.error(e)
+        if not branchForcePush.ok:
+            try:
+                branchForcePush = requests.patch(
+                    os.environ.get(target)
+                    + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}?allow_force_push=true",
+                    headers=header,
+                )
+            except Exception as e:
+                logging.error(e)
 
         writeLogJson("createArc", 201, startTime)
     return [projectPost.content, commitRequest.content]
