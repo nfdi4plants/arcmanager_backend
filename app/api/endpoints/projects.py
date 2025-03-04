@@ -13,9 +13,12 @@ from fastapi import (
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.encoders import jsonable_encoder
 
+import subprocess
+
 # gitlab api commits need base64 encoded content
 import base64
 
+import shutil
 import json
 import os
 import requests
@@ -59,6 +62,7 @@ from app.models.gitlab.input import (
     newIsa,
     syncAssayContent,
     syncStudyContent,
+    InvenioContent,
 )
 from app.models.gitlab.projects import Projects
 from app.models.gitlab.arc import Arc
@@ -2490,3 +2494,110 @@ async def getBanner(request: Request, token: commonToken) -> Banner | None:
             status_code=500,
             detail=f"Couldn't receive newest Datahub banner!",
         )
+
+
+@router.post(
+    "/publishArc",
+    summary="Uploads a zip of the arc to invenio",
+    description="The arc is archived using git archive and uploaded to invenio (fdat) for long time storage",
+    status_code=status.HTTP_200_OK,
+)
+async def exportProject(
+    request: Request, token: commonToken, invenioData: InvenioContent
+):
+    try:
+        target = getTarget(token["target"])
+        arcName = invenioData.arcName
+        namespace = invenioData.namespace
+        invenioPAT = invenioData.invenioPAT
+        invenioId = invenioData.invenioId
+    except:
+        raise HTTPException(status_code=400, detail="Missing information!")
+
+    workDir = f"{os.environ.get('BACKEND_SAVE')}cache"
+
+    os.chdir(workDir)
+
+    # cleanup any folders with the same name currently existing
+    try:
+        shutil.rmtree(f"{workDir}/{arcName}")
+        os.remove(f"{workDir}/{arcName}.zip")
+    except Exception as e:
+        logging.warning(str(e))
+
+    try:
+        gitClone = subprocess.run(
+            [
+                "git",
+                "clone",
+                f"https://oauth2:{token['gitlab']}@{os.environ.get(target).split('://')[1]}/{namespace}.git",
+            ]
+        )
+    except:
+        logging.warning("Git clone failed. Folder probably already existing!")
+
+    logging.debug(gitClone)
+
+    os.chdir(f"{workDir}/{arcName}")
+
+    gitArchive = subprocess.run(
+        ["git", "archive", "--output=" + workDir + f"/{arcName}.zip", "HEAD"]
+    )
+
+    logging.debug(gitArchive)
+
+    invenioAddress = "https://inveniordm.web.cern.ch/api"
+
+    uploadHeader = {
+        "Content-Type": "application/octet-stream",
+        "Authorization": f"Bearer {invenioPAT}",
+    }
+
+    normalHeader = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {invenioPAT}",
+    }
+
+    payload = [{"key": f"{arcName}.zip"}]
+
+    fileCreation = requests.post(
+        f"{invenioAddress}/records/{invenioId}/draft/files",
+        headers=normalHeader,
+        data=json.dumps(payload),
+    )
+
+    try:
+        with open(f"{workDir}/{arcName}.zip", "rb") as f:
+            fileData = f.read()
+    except:
+        logging.error("Could not find/create arc zip file!")
+        raise HTTPException(status_code=500, detail="Error archiving the arc!")
+
+    try:
+        assert fileCreation.ok
+
+        testUpload = requests.put(
+            f"https://inveniordm.web.cern.ch/api/records/{invenioId}/draft/files/{arcName}.zip/content",
+            headers=uploadHeader,
+            data=fileData,
+        )
+
+        assert testUpload.ok
+
+        fileCommit = requests.post(
+            f"{invenioAddress}/records/{invenioId}/draft/files/{arcName}.zip/commit",
+            headers=normalHeader,
+        )
+
+        assert fileCommit.ok
+    except Exception as e:
+        logging.error(str(e))
+        raise HTTPException(status_code=500, detail="Arc could not be published!")
+    try:
+        os.chdir(f"{workDir}")
+        shutil.rmtree(f"{workDir}/{arcName}")
+        os.remove(f"{workDir}/{arcName}.zip")
+    except Exception as e:
+        logging.warning(f"Could not remove directory. Remove them manually! {e}")
+
+    return "Your ARC was uploaded successfully!"

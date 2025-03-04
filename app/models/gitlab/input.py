@@ -95,3 +95,10 @@ class datamapContent(BaseModel):
 # personal access token
 class pat(BaseModel):
     pat: str
+
+
+class InvenioContent(BaseModel):
+    arcName: str
+    invenioPAT: str
+    invenioId: str
+    namespace: str

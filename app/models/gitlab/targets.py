@@ -7,4 +7,3 @@ class Targets(str, Enum):
     freiburg = "freiburg"
     plantmicrobe = "plantmicrobe"
     testenv = "tuebingen_testenv"
-    fdat = "fdat"
