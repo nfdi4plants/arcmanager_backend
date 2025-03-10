@@ -2511,7 +2511,7 @@ async def exportProject(
         arcName = invenioData.arcName
         namespace = invenioData.namespace
         invenioPAT = invenioData.invenioPAT
-        invenioId = invenioData.invenioId
+        invenioURL = invenioData.invenioURL
     except:
         raise HTTPException(status_code=400, detail="Missing information!")
 
@@ -2547,7 +2547,11 @@ async def exportProject(
 
     logging.debug(gitArchive)
 
-    invenioAddress = "https://inveniordm.web.cern.ch/api"
+    try:
+        invenioId = invenioURL.split("/")[-1]
+        invenioAddress = f"{invenioURL.split('/uploads')[0]}/api"
+    except:
+        raise HTTPException(status_code=400, detail="Invenio Address is not valid!")
 
     uploadHeader = {
         "Content-Type": "application/octet-stream",
@@ -2578,7 +2582,7 @@ async def exportProject(
         assert fileCreation.ok
 
         testUpload = requests.put(
-            f"https://inveniordm.web.cern.ch/api/records/{invenioId}/draft/files/{arcName}.zip/content",
+            f"{invenioAddress}/records/{invenioId}/draft/files/{arcName}.zip/content",
             headers=uploadHeader,
             data=fileData,
         )

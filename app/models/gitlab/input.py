@@ -98,7 +98,9 @@ class pat(BaseModel):
 
 
 class InvenioContent(BaseModel):
-    arcName: str
-    invenioPAT: str
-    invenioId: str
-    namespace: str
+    arcName: str = Field(examples=["test Arc"])
+    invenioPAT: str = Field(examples=["xyz123456...."])
+    invenioURL: str = Field(
+        examples=["https://fdat.uni-tuebingen.de/uploads/12345-vwxyz"]
+    )
+    namespace: str = Field(examples=["user/test Arc"])
