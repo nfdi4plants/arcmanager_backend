@@ -39,7 +39,7 @@ from cryptography.fernet import Fernet
 from app.models.gitlab.banner import Banner, Banners
 from app.models.gitlab.file import FileContent
 from app.models.gitlab.targets import Targets
-from pdf2image import convert_from_bytes  # type: ignore
+from pdf2image import convert_from_bytes
 
 # paths in get requests need to be parsed to uri encoded strings
 from urllib.parse import quote
