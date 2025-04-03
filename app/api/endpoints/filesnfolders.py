@@ -206,23 +206,29 @@ async def uploadFile(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
+    tempFile = tempfile.TemporaryFile(
+        prefix="temp_",
+        dir=os.environ.get("BACKEND_SAVE") + "cache",
+    )
+
     f = open(
         f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunkNumber}",
         "wb",
     )
     f.write(file)
     f.close()
-    # fullData holds the final file data
-    fullData = bytes()
 
     # if the current chunk is the last chunk, merge all chunks together and write them into fullData
     if chunkNumber + 1 == totalChunks:
+
         for chunk in range(totalChunks):
             f = open(
                 f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
                 "rb",
             )
-            fullData += f.read()
+
+            tempFile.write(f.read())
+
             f.close()
 
         # clear the chunks
@@ -232,8 +238,11 @@ async def uploadFile(
         except:
             pass
 
+        tempFile.seek(0)
+
         # open up a new hash
         shasum = hashlib.new("sha256")
+        shasum.update(tempFile.read())
 
         ##########################
         ## START UPLOAD PROCESS ##
@@ -247,17 +256,6 @@ async def uploadFile(
                 )
                 raise HTTPException(400, "No Namespace was included!")
             logging.debug("Uploading file with lfs...")
-
-            # create a new tempfile to store the data
-            tempFile = tempfile.SpooledTemporaryFile(
-                max_size=1024 * 1024 * 100,
-                mode="w+b",
-                dir=os.environ.get("BACKEND_SAVE") + "cache",
-            )
-            # write the data into the hash and tempfile
-            shasum.update(fullData)
-
-            tempFile.write(fullData)
 
             # jump to file end and read the size
             tempFile.seek(0, 2)
@@ -358,13 +356,12 @@ async def uploadFile(
                     urlUpload = result["objects"][0]["actions"]["upload"]["href"]
                     header_upload.pop("Transfer-Encoding")
                     tempFile.seek(0, 0)
-                    fileContent = tempFile.read()
 
                     try:
-                        res = session.put(
+                        res = requests.put(
                             urlUpload,
                             headers=header_upload,
-                            data=fileContent,
+                            data=tempFile.read(),
                         )
                     except Exception as e:
                         logging.error(e)
@@ -709,7 +706,7 @@ async def uploadFile(
                     payload = {
                         "branch": str(branch),
                         # base64 encoding of the isa file
-                        "content": base64.b64encode(fullData).decode("utf-8"),
+                        "content": base64.b64encode(tempFile.read()).decode("utf-8"),
                         "commit_message": f"Upload of new File {name}",
                         "encoding": "base64",
                     }
@@ -749,7 +746,7 @@ async def uploadFile(
                     payload = {
                         "branch": branch,
                         # base64 encoding of the isa file
-                        "content": base64.b64encode(fullData).decode("utf-8"),
+                        "content": base64.b64encode(tempFile.read()).decode("utf-8"),
                         "commit_message": f"Updating File {name}",
                         "encoding": "base64",
                     }

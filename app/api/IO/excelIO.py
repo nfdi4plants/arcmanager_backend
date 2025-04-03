@@ -552,7 +552,11 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
     # finally fill the data in the correct rows
     for x in range(len(study)):
         for y in range(len(study.columns)):
-            invest.iat[rowIndex + x, y] = study.iat[x, y]
+            try:
+                invest.iat[rowIndex + x, y] = study.iat[x, y]
+            except Exception as e:
+                invest.loc[len(invest)] = {"ONTOLOGY SOURCE REFERENCE": "OTHER"}
+                invest.iat[rowIndex + x, y] = study.iat[x, y]
 
     try:
         # save the changes to the excel file

@@ -78,7 +78,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     exc_str = f"{exc}".replace("\n", " ").replace("   ", " ")
     logging.debug(f"Cookies: {request.cookies}")
     logging.error(f"{exc}")
-    content = {"status_code": 422, "detail": exc_str}
+    content = {
+        "status_code": 422,
+        "detail": f"Try clearing your browser data and cookies! ERROR: {exc_str}",
+    }
     return JSONResponse(
         content=content, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
     )
