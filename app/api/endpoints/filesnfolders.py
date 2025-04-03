@@ -218,6 +218,9 @@ async def uploadFile(
     f.write(file)
     f.close()
 
+    # open up a new hash
+    shasum = hashlib.new("sha256")
+
     # if the current chunk is the last chunk, merge all chunks together and write them into fullData
     if chunkNumber + 1 == totalChunks:
 
@@ -226,8 +229,9 @@ async def uploadFile(
                 f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
                 "rb",
             )
-
-            tempFile.write(f.read())
+            chunkData = f.read()
+            shasum.update(chunkData)
+            tempFile.write(chunkData)
 
             f.close()
 
@@ -239,10 +243,6 @@ async def uploadFile(
             pass
 
         tempFile.seek(0)
-
-        # open up a new hash
-        shasum = hashlib.new("sha256")
-        shasum.update(tempFile.read())
 
         ##########################
         ## START UPLOAD PROCESS ##
