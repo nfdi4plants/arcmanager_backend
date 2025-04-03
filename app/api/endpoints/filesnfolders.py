@@ -358,7 +358,7 @@ async def uploadFile(
                     tempFile.seek(0, 0)
 
                     try:
-                        res = requests.put(
+                        res = session.put(
                             urlUpload,
                             headers=header_upload,
                             data=tempFile.read(),
