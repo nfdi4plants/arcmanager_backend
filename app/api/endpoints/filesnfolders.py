@@ -37,6 +37,8 @@ from app.models.gitlab.input import LFSUpload, folderContent
 import time
 import logging
 
+from dotenv import load_dotenv
+
 logging.basicConfig(
     filename="backend.log",
     filemode="a",
@@ -66,6 +68,8 @@ session.mount("http://", adapter)
 router = APIRouter()
 
 commonToken = Annotated[str, Depends(getData)]
+
+load_dotenv()
 
 tempfile.tempdir = os.environ.get("BACKEND_SAVE") + "cache"
 
