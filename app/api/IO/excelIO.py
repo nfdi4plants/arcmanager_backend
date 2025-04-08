@@ -84,6 +84,7 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     match type:
         case "investigation":
             sheetName = "isa_investigation"
+            sheetName2 = "isa_investigation"
 
         case "study":
             sheetName2 = "Study"
@@ -109,7 +110,8 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     try:
         isaFile = pd.read_excel(pathName, sheet_name=sheetName, engine="openpyxl")
 
-    except:
+    except Exception as e:
+        print(f"Exception: {e}")
         try:
             sheetName = sheetName2
             isaFile = pd.read_excel(pathName, sheet_name=sheetName2, engine="openpyxl")
