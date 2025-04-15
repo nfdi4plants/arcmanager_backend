@@ -371,7 +371,7 @@ async def uploadFile(
                         res = session.put(
                             urlUpload,
                             headers=header_upload,
-                            data=tempFile.read(),
+                            data=tempFile,
                             stream=True,
                         )
                     except Exception as e:
@@ -832,6 +832,9 @@ async def uploadFile(
             "uploadFile",
             202,
             startTime,
+        )
+        logging.debug(
+            f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"
         )
         return Response(
             json.dumps(
