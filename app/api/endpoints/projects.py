@@ -268,6 +268,28 @@ async def checkStudyLink(
         return False
 
 
+def startRequest(request: Request, token: commonToken, startTime: float, endpoint: str):
+    try:
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
+        )
+        writeLogJson(
+            endpoint,
+            401,
+            startTime,
+            f"Client connected with no valid cookies/Client is not logged in.",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized! Please authorize or refresh session!",
+        )
+
+    return header, target
+
+
 # get a list of all arcs accessible to the user
 @router.get(
     "/arc_list",
@@ -286,23 +308,8 @@ async def list_arcs(
     page: Annotated[int, Query(ge=1)] = 1,
 ) -> Projects:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_list",
-            401,
-            startTime,
-            f"Client connected with no valid cookies/Client is not logged in.",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not logged in! Please authorize or refresh session!",
-        )
+
+    header, target = startRequest(request, token, startTime, "arc_list")
 
     arcList = []
 
@@ -438,23 +445,8 @@ async def list_arcs_head(
     ] = False,
 ):
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_list_head",
-            401,
-            startTime,
-            f"Client connected with no valid cookies/Client is not logged in.",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not logged in! Please authorize or refresh session!",
-        )
+
+    header, target = startRequest(request, token, startTime, "arc_list_head")
 
     if owned:
         # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
@@ -639,23 +631,7 @@ async def arc_tree(
     branch: Annotated[str, Query()] = "main",
 ) -> Arc:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client has no rights to view this ARC! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_tree",
-            401,
-            startTime,
-            f"Client has no rights to view this ARC!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC! Please authorize or refresh session!",
-        )
+    header, target = startRequest(request, token, startTime, "arc_tree")
 
     arc = requests.get(
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&ref={branch}",
@@ -708,23 +684,7 @@ async def arc_path(
     branch: Annotated[str, Query()] = "main",
 ) -> Arc:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_path",
-            401,
-            startTime,
-            f"Client is not authorized to view ARC {id}",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC! Please authorize or refresh session!",
-        )
+    header, target = startRequest(request, token, startTime, "arc_path")
 
     try:
         arcPath = session.get(
@@ -795,23 +755,8 @@ async def arc_file(
     branch: str = "main",
 ) -> FileContent | list[list] | dict:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to get the file! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_file",
-            401,
-            startTime,
-            f"Client is not authorized to get the file!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to get this file! Please authorize or refresh session!",
-        )
+    header, target = startRequest(request, token, startTime, "arc_file")
+
     # get HEAD data for fileSize
     # url encode the path
     fileHead = session.head(
@@ -1888,21 +1833,7 @@ async def getChanges(
     branch: str = "main",
 ) -> list:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
-        writeLogJson(
-            "getChanges",
-            401,
-            startTime,
-            f"No authorized Cookie found!",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
-        )
+    header, target = startRequest(request, token, startTime, "getChanges")
 
     commits = requests.get(
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100&ref_name={branch}",
@@ -2276,23 +2207,8 @@ async def getBranches(
     request: Request, id: Annotated[int, Query(ge=1)], token: commonToken
 ) -> list:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "getBranches",
-            401,
-            startTime,
-            f"Client is not authorized to view ARC {id}",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC! Please authorize or refresh session!",
-        )
+    header, target = startRequest(request, token, startTime, "getBranches")
+
     try:
         # request branches
         branches = requests.get(
@@ -2434,20 +2350,7 @@ async def addDatamap(
 )
 async def getBanner(request: Request, token: commonToken) -> Banner | None:
     startTime = time.time()
-    try:
-        target = getTarget(token["target"])
-    except:
-        logging.warning(f"Client not authorized! Cookies: {request.cookies}")
-        writeLogJson(
-            "addDatamap",
-            401,
-            startTime,
-            f"Client not authorized!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized! Please authorize or refresh session!",
-        )
+    header, target = startRequest(request, token, startTime, "getBanner")
 
     # send the data to the repo
     bannerRequest = requests.get(

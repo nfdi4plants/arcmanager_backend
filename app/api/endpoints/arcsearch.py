@@ -72,7 +72,10 @@ async def getLicenseData(id: int, datahub: str):
     branches = requests.get(
         f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/branches",
     )
-    branches = [x["name"] for x in branches.json()]
+    try:
+        branches = [x["name"] for x in branches.json()]
+    except:
+        branches = ["main"]
     try:
         projectJson = request.json()
         license = projectJson["license"]

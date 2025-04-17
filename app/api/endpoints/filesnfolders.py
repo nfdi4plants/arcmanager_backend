@@ -7,7 +7,6 @@ from typing import Annotated
 from urllib.parse import quote
 from fastapi import (
     APIRouter,
-    Cookie,
     Depends,
     File,
     Form,
@@ -15,7 +14,6 @@ from fastapi import (
     Query,
     Request,
     Response,
-    UploadFile,
     status,
 )
 import requests
@@ -228,9 +226,8 @@ async def uploadFile(
     # open up a new hash
     shasum = hashlib.new("sha256")
 
-    # if the current chunk is the last chunk, merge all chunks together and write them into fullData
+    # if the current chunk is the last chunk, merge all chunks together and write them into the temporary file
     if chunkNumber + 1 == totalChunks:
-
         for chunk in range(totalChunks):
             f = open(
                 f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
@@ -249,13 +246,14 @@ async def uploadFile(
         except:
             pass
 
+        # go to the start of the tempfile
         tempFile.seek(0)
 
         ##########################
         ## START UPLOAD PROCESS ##
         ##########################
 
-        # the following code is for uploading a file with LFS (thanks to Julian Weidhase for the code)
+        # the following code is for uploading a file with LFS (code based on ARCfs from Dataplant)
         if lfs.value == "true":
             if namespace == "":
                 logging.error(
@@ -307,6 +305,7 @@ async def uploadFile(
 
                 ### Start upload process ###
 
+                # asking gitlab for the lfs address for the file
                 try:
                     r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
                 except Exception as e:
@@ -356,22 +355,28 @@ async def uploadFile(
                 try:
                     test = result["objects"][0]["actions"]
 
-                # if the file is the same, there will be no "actions" attribute
+                # if the file is the same, there will be no "actions" attribute and therefore no upload is needed
                 except:
                     testFail = True
 
                 # if the file is new or includes new content, upload it
                 if not testFail:
+                    # get header data
                     header_upload = result["objects"][0]["actions"]["upload"]["header"]
+
+                    # get the upload link
                     urlUpload = result["objects"][0]["actions"]["upload"]["href"]
                     header_upload.pop("Transfer-Encoding")
+
+                    # start at the beginning of the file
                     tempFile.seek(0, 0)
 
+                    # upload the full file to lfs
                     try:
                         res = session.put(
                             urlUpload,
                             headers=header_upload,
-                            data=tempFile.read(),
+                            data=tempFile,
                             stream=True,
                         )
                     except Exception as e:
@@ -405,6 +410,8 @@ async def uploadFile(
                                 detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                             )
 
+                logging.debug("Uploading pointer file to repo...")
+
                 # build and upload the new pointer file to the arc
                 repoPath = quote(path, safe="")
 
@@ -427,9 +434,12 @@ async def uploadFile(
                         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
                         headers=header,
                     )
+
+                    # if file exists, a put request is needed as the file is being updated
                     if fileHead.ok:
                         response = session.put(postUrl, headers=headers, json=jsonData)
 
+                    # if the head request fails, the files does not exist yet and needs to be send via http POST
                     else:
                         response = session.post(postUrl, headers=headers, json=jsonData)
 
@@ -442,7 +452,7 @@ async def uploadFile(
                             postUrl, headers=headers, json=jsonData
                         )
 
-                ## if it fails, return an error or start again
+                ## if the pointer upload fails, return an error or start again (in case of an 400 error, indicating gitlab being overwhelmed currently)
                 if not response.ok and response.status_code != 400:
                     try:
                         responseJson = response.json()
@@ -463,6 +473,7 @@ async def uploadFile(
                         status_code=response.status_code,
                         detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
                     )
+
                 else:
                     # return exception if upload failed after 3 tries
                     if x >= 2 and response.status_code == 400:
@@ -480,8 +491,9 @@ async def uploadFile(
                             detail=f"File {name} failed to upload after three tries! ERROR: {response.content}",
                         )
 
+                    # check if response actually was successful, else the loop will start back at the beginning
                     if response.ok:
-                        # check availability
+                        # check availability to make sure, the file also was properly uploaded in the lfs
                         logging.debug("Checking availability for " + name)
                         lfsJsonDown = {
                             "operation": "download",
@@ -490,6 +502,8 @@ async def uploadFile(
                             "ref": {"name": f"refs/heads/{branch}"},
                             "hash_algo": "sha256",
                         }
+
+                        # request the download url for the file from lfs
                         try:
                             downloadCheck = session.post(downloadUrl, json=lfsJsonDown)
                         except Exception as e:
@@ -501,6 +515,7 @@ async def uploadFile(
                             )
                         if downloadCheck.ok:
                             try:
+                                # get the download url and header for the file
                                 checkResult = downloadCheck.json()
                                 header_download = checkResult["objects"][0]["actions"][
                                     "download"
@@ -510,6 +525,7 @@ async def uploadFile(
                                 ]["href"]
 
                                 try:
+                                    # make a simple head request just to see whether the file is existing (we dont need to download it)
                                     lfsCheck = session.head(
                                         urlDownload,
                                         headers=header_download,
@@ -526,15 +542,17 @@ async def uploadFile(
                                 if lfsCheck.ok:
                                     logging.debug(f"Upload of file {name} successful")
                                     x = 3
+
+                                # if file is missing it indicates a failed upload attempt -> go back to the start of the loop
                                 else:
                                     logging.warning(
                                         f"File {name} not found in LFS storage, retrying upload process..."
                                     )
                             except Exception as e:
                                 logging.error(e)
-            ### end for loop ###
 
-            logging.debug("Uploading pointer file to repo...")
+            ### end of loop ###
+
             # logging
             logging.info(
                 f"Uploaded File {name} to repo {id} on path: {path} with LFS. Size: {fileSizeReadable(size)}"
@@ -548,6 +566,7 @@ async def uploadFile(
 
                 newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
 
+                # get the .gitattributes (for every retry sleep 2 sec in between)
                 try:
                     if y > 0:
                         logging.debug("Retrying retrieving .gitattributes...")
@@ -827,11 +846,16 @@ async def uploadFile(
                 startTime,
             )
             return response
+
+    # log the current progress and return the confirmation
     else:
         writeLogJson(
             "uploadFile",
             202,
             startTime,
+        )
+        logging.debug(
+            f"Received chunk {chunkNumber+1} of {totalChunks} for file {name}"
         )
         return Response(
             json.dumps(
