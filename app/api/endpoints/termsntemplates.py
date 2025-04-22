@@ -27,14 +27,6 @@ from app.models.swate.term import Terms
 
 router = APIRouter()
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="a",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
-
 commonToken = Annotated[str, Depends(getData)]
 
 

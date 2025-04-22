@@ -69,16 +69,6 @@ from app.models.gitlab.arc import Arc
 
 router = APIRouter()
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="a",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
-
-logging.getLogger("multipart").setLevel(logging.INFO)
-
 # request sessions to retry the important requests
 retry = Retry(
     total=5,

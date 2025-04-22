@@ -21,14 +21,6 @@ from app.models.gitlab.user import Users
 
 router = APIRouter()
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="w",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
-
 commonToken = Annotated[str, Depends(getData)]
 
 

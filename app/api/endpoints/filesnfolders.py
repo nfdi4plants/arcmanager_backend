@@ -37,16 +37,6 @@ import logging
 
 from dotenv import load_dotenv
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="a",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
-
-logging.getLogger("multipart").setLevel(logging.INFO)
-
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 # request sessions to retry the important requests
@@ -70,6 +60,8 @@ commonToken = Annotated[str, Depends(getData)]
 load_dotenv()
 
 tempfile.tempdir = os.environ.get("BACKEND_SAVE") + "cache"
+
+logging.getLogger("python_multipart").setLevel(logging.INFO)
 
 
 # remove a file from gitattributes if its no longer lfs tracked (through either deletion or upload directly without lfs)

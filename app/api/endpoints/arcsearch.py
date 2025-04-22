@@ -19,14 +19,6 @@ from app.models.gitlab.projects import Projects
 
 router = APIRouter()
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="a",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
-
 
 async def getStudyAssays(id: int, datahub: str, branch: str, study: str) -> list:
     target = getTarget(datahub)
