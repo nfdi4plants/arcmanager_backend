@@ -231,12 +231,9 @@ async def uploadFile(
 
             f.close()
 
-            # clear the chunks
+            # clear the chunk
             try:
-                for chunk in range(totalChunks):
-                    os.remove(
-                        f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}"
-                    )
+                os.remove(f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}")
             except:
                 logging.warning(f"Failed to remove chunk {chunk} for file {name}")
 

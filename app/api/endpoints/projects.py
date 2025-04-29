@@ -1,4 +1,3 @@
-from enum import Enum
 from typing import Annotated
 from fastapi import (
     APIRouter,
@@ -201,9 +200,7 @@ async def checkAssayLink(
 
             for entry in studyTest:
                 if "Study Assay File Name" in entry:
-                    logging.debug(
-                        f"Syncing {path} into {study} after link was found..."
-                    )
+                    logging.debug(f"Link found; Syncing {path} into {study} ...")
                     if path in entry:
                         syncData = syncAssayContent(
                             id=id,
