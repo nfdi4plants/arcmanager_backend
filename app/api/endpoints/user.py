@@ -4,14 +4,11 @@ import time
 from typing import Annotated
 from fastapi import (
     APIRouter,
-    Cookie,
     Depends,
     HTTPException,
     Query,
     status,
-    Response,
     Request,
-    Header,
 )
 import requests
 

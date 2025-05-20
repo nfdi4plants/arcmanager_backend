@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
+import urllib3.util.connection
 
 description = """
 The **ARCmanager** can be found [here](https://nfdi4plants.de/arcmanager/app/index.html)
@@ -19,6 +20,7 @@ The code for the front- and backend can be found on the DataPLANT Github here:
 [Backend](https://github.com/nfdi4plants/arcmanager_backend)
 """
 
+# config the default python logger
 logging.basicConfig(
     filename="backend.log",
     filemode="a",
@@ -32,15 +34,16 @@ app = FastAPI(
     summary="ARCmanager API enables you to read out and write to your ARC in any datahub",
     docs_url="/arcmanager/api/v1/docs",
     openapi_url="/arcmanager/api/v1/openapi.json",
-    version="1.1.9",
+    version="1.1.12",
     description=description,
 )
 
-# clear the current log
+# clear the current custom log
 with open("log.json", "w") as log:
     log.write("[]")
 log.close()
 
+# load the environment variables from the .env file
 load_dotenv()
 
 # valid frontend url origins
@@ -68,11 +71,14 @@ app.add_middleware(
 
 app.include_router(api_router)
 
+# force the app to use IPv4 (preventing issues with IPv6)
+urllib3.util.connection.HAS_IPV6 = False
 
+
+# in case of a validation error, log the exception including the cookies to see where the error is coming from
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     exc_str = f"{exc}".replace("\n", " ").replace("   ", " ")
-    logging.debug(f"Cookies: {request.cookies}")
     logging.error(f"{exc}")
     content = {
         "status_code": 422,

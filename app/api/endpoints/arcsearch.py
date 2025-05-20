@@ -1,25 +1,23 @@
 import json
 import logging
 import os
+from typing import List
 from urllib.parse import quote
 from fastapi import (
     APIRouter,
-    Cookie,
     HTTPException,
     status,
-    Response,
-    Request,
-    Header,
 )
 import requests
 
 from app.api.IO.excelIO import readIsaFile
-from app.api.endpoints.projects import getData, getTarget, public_arcs, writeLogJson
-from app.models.gitlab.projects import Projects
+from app.api.endpoints.projects import getTarget, public_arcs
+from app.models.gitlab.projects import Projects, Project
 
 router = APIRouter()
 
 
+# read out linked assays inside of the given study file
 async def getStudyAssays(id: int, datahub: str, branch: str, study: str) -> list:
     target = getTarget(datahub)
 
@@ -42,7 +40,8 @@ async def getStudyAssays(id: int, datahub: str, branch: str, study: str) -> list
             file.write(fileRaw)
 
         logging.debug("Downloading File to " + pathName)
-        # read out isa file and create json
+
+        # read out isa file and create json (split string and read out the assay name)
         fileJson = readIsaFile(pathName, "study")
         for entry in fileJson["data"]:
             if "Study Assay File Name" in entry:
@@ -57,17 +56,12 @@ async def getStudyAssays(id: int, datahub: str, branch: str, study: str) -> list
     return []
 
 
+# get the license data from the project
 async def getLicenseData(id: int, datahub: str):
     request = requests.get(
         f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}?license=true",
     )
-    branches = requests.get(
-        f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/branches",
-    )
-    try:
-        branches = [x["name"] for x in branches.json()]
-    except:
-        branches = ["main"]
+
     try:
         projectJson = request.json()
         license = projectJson["license"]
@@ -77,6 +71,7 @@ async def getLicenseData(id: int, datahub: str):
     return license
 
 
+# get the contact and publication data from the isa investigation file
 async def getInvestData(id: int, datahub: str, branch: str):
     # contains [identifier, [contacts], [publications]]
     result = [[], []]
@@ -146,6 +141,8 @@ async def getInvestData(id: int, datahub: str, branch: str):
     return result
 
 
+# returns a dict containing the list of assays linked to its studies
+# if there are assays not linked to any study, they will be listed under "other"
 async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
     assays = requests.get(
         f"{os.environ.get(getTarget(datahub))}/api/v4/projects/{id}/repository/tree?path=assays&ref={branch}",
@@ -173,6 +170,8 @@ async def getAssayStudyRel(id: int, datahub: str, branch: str) -> dict:
     return studyDict
 
 
+# creates a json containing the information about all publicly available arcs
+# this is a long process and should not be spammed!
 @router.post(
     "/createArcJson",
     summary="Creates a json containing all publicly available Arcs",
@@ -206,13 +205,17 @@ async def createArcJson():
 
         projects = await public_arcs(datahub)
         pages = int(projects.headers.get("total-pages"))
-        data = Projects(projects=json.loads(projects.body)["projects"]).projects
+        data: List[Project] = Projects(
+            projects=json.loads(projects.body)["projects"]
+        ).projects
 
         for i in range(2, pages + 1):
             projects = await public_arcs(datahub, i)
             data += Projects(projects=json.loads(projects.body)["projects"]).projects
 
         for i, arc in enumerate(data):
+            # if the last activity was in 2025, we update the data
+            # everything older is not updated and uses the old data (this saves time)
             if arc.last_activity_at.startswith("2025"):
 
                 investData = await getInvestData(arc.id, datahub, arc.default_branch)
@@ -276,6 +279,7 @@ async def createArcJson():
     return fullProjects
 
 
+# get the json containing information about all public arcs
 @router.get(
     "/getArcJson",
     summary="Get the json containing information about all public arcs",

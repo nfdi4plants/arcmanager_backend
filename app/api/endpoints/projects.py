@@ -112,20 +112,6 @@ def getTarget(target: str) -> str:
             return "GITLAB_TUEBINGEN"
 
 
-# get the username using the id
-async def getUserName(target: str, userId: int, access_token: str) -> str:
-    header = {"Authorization": "Bearer " + access_token}
-    try:
-        userInfo = requests.get(
-            f"{os.environ.get(getTarget(target))}/api/v4/users/{userId}",
-            headers=header,
-        ).json()
-
-        return userInfo["name"]
-    except:
-        return "username"
-
-
 # decrypt the cookie data with the corresponding public key
 def getData(data: Annotated[str, Cookie()]):
     # get public key from .env to decode data (in form of a byte string)
@@ -294,6 +280,14 @@ async def list_arcs(
     ] = False,
     page: Annotated[int, Query(ge=1)] = 1,
 ) -> Projects:
+    """
+    Get a list of available ARCs stored in the DataHUB:
+
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param owned: Whether the ARCs should be filtered to show only those ARCs where the user is a member of
+    :param page: Which page to show (every page contains 20 ARCs)
+    \f
+    """
     startTime = time.time()
 
     header, target = startRequest(request, token, startTime, "arc_list")
@@ -543,6 +537,13 @@ async def list_arcs_head(
 async def public_arcs(
     target: Targets, page: Annotated[int, Query(ge=1)] = 1
 ) -> Projects:
+    """
+    Get a list of publicly available ARCs stored in the DataHUB:
+
+    :param target: The target DataHUB
+    :param page: Which page to show (every page contains 20 ARCs)
+    \f
+    """
     startTime = time.time()
     try:
         target = getTarget(target)
@@ -617,6 +618,14 @@ async def arc_tree(
     request: Request,
     branch: Annotated[str, Query()] = "main",
 ) -> Arc:
+    """
+    Get the frontpage list of files and folders of the ARC
+
+    :param id: The id of the ARC
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
     header, target = startRequest(request, token, startTime, "arc_tree")
 
@@ -670,6 +679,16 @@ async def arc_path(
     page: Annotated[int, Query(ge=1)] = 1,
     branch: Annotated[str, Query()] = "main",
 ) -> Arc:
+    """
+    Get the files and folders on the given path
+
+    :param id: The id of the ARC
+    :param path: Path requested containing the desired files and folders
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param pages: Page number of the list of data (each page holds 20 entries)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
     header, target = startRequest(request, token, startTime, "arc_path")
 
@@ -741,15 +760,31 @@ async def arc_file(
     token: commonToken,
     branch: str = "main",
 ) -> FileContent | list[list] | dict:
+    """
+    Get the specific file
+
+    :param id: The id of the ARC
+    :param path: Path of the requested file
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
     header, target = startRequest(request, token, startTime, "arc_file")
 
     # get HEAD data for fileSize
     # url encode the path
-    fileHead = session.head(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-        headers=header,
-    )
+    try:
+        fileHead = session.head(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
+            headers=header,
+        )
+    except:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Error reaching the Datahub! Please try again later!",
+        )
+
     # raise error if file not found
     if not fileHead.ok:
         logging.error(f"File not found! Path: {path}")
@@ -823,7 +858,7 @@ async def arc_file(
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
         # if file is too big, skip requesting it
-        if int(fileSize) > 50000000:
+        if int(fileSize) > 52428800:
             logging.warning("File too large! Size: " + fileSizeReadable(int(fileSize)))
             writeLogJson(
                 "arc_file",
@@ -951,6 +986,13 @@ async def arc_file(
     response_description="Response of the commit request from Gitlab.",
 )
 async def saveFile(request: Request, isaContent: isaContent, token: commonToken):
+    """
+    Write and save the specific data to the isa file
+
+    :param isaContent: Content of the request body containing required data (filepath, arcid, branch, ...)
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    \f
+    """
     startTime = time.time()
     try:
         isaContent.isaInput = sanitizeInput(isaContent.isaInput)
@@ -1052,6 +1094,16 @@ async def commitFile(
     branch: str = "main",
     message: str = "",
 ):
+    """
+    Update the file with the given content (content either from the backend (after saveFile) or from the request body)
+
+    :param id: The id of the ARC
+    :param repoPath: Path of the file on the ARC
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param filePath: Path of the file stored in the backend (used by saveFile for isa file changes)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
     # get the data from the body
     requestBody = await request.body()

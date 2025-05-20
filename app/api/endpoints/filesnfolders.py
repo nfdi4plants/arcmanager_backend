@@ -961,6 +961,11 @@ async def deleteFolder(
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?path={path}&ref={branch}",
         headers=header,
     )
+    if not arcPath.ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Path {path} does not exist! Please reload your Arc!",
+        )
 
     pages = int(arcPath.headers["X-Total-Pages"])
 

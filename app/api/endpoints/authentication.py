@@ -5,7 +5,6 @@ from fastapi.responses import RedirectResponse
 import requests
 from starlette.config import Config
 import urllib
-from app.api.endpoints.projects import getUserName
 from cryptography.fernet import Fernet
 
 # from starlette.requests import Request
@@ -215,7 +214,7 @@ async def callback(request: Request, datahub: str):
     )
 
     try:
-        username = await getUserName(datahub, userInfo, access_token)
+        username = token.get("userinfo")["name"]
         response.set_cookie(
             "username",
             urllib.parse.quote(username),

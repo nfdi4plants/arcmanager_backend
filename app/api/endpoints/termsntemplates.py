@@ -40,62 +40,68 @@ commonToken = Annotated[str, Depends(getData)]
 )
 async def getTemplates() -> Templates:
     startTime = time.time()
-    # send get request to swate api requesting all templates
-    request = requests.get(
-        "https://swate-alpha.nfdi4plants.org/api/ITemplateAPIv1/getTemplates"
-    )
-    try:
-        templateJson = request.json()
-    except:
-        templateJson = {}
+    # send get request to swate template registry api requesting all templates
+    request = requests.get("https://str.nfdi4plants.org/api/v1/templates")
 
-    # first try the old way to list the templates
-    try:
-        templateList = [json.loads(x) for x in templateJson]
+    # if request was successful, parse the data
+    if request.ok:
+        try:
+            templateList = [
+                json.loads(entry["TemplateContent"]) for entry in request.json()
+            ]
 
-        # include list of custom templates
-        templatePath = os.environ.get("BACKEND_SAVE") + "templates"
-        listOfTemplates = os.listdir(templatePath)
+            # include list of custom templates
+            templatePath = os.environ.get("BACKEND_SAVE") + "templates"
+            listOfTemplates = os.listdir(templatePath)
 
-        for entry in listOfTemplates:
-            with open(templatePath + "/" + entry, "r") as f:
-                data = json.load(f)
-                templateList.append(data)
-                f.close()
-    except:
-        pass
+            for entry in listOfTemplates:
+                with open(templatePath + "/" + entry, "r") as f:
+                    data = json.load(f)
+                    templateList.append(data)
+                    f.close()
+        except:
+            raise HTTPException(status_code=500, detail="Could not retrieve templates!")
 
-    # if it fails try the new alternative way
-    try:
-        templateList2 = [x for x in json.loads(templateJson)]
-        # include list of custom templates
-        templatePath = os.environ.get("BACKEND_SAVE") + "templates"
-        listOfTemplates = os.listdir(templatePath)
-
-        for entry in listOfTemplates:
-            with open(templatePath + "/" + entry, "r") as f:
-                data = json.load(f)
-                templateList2.append(data)
-                f.close()
-
-    except:
-        templateJson = {}
-
-    # if swate is down, return error
-    if not request.ok:
-        logging.error(
-            f"There was an error retrieving the swate templates! ERROR: {templateJson}"
+    # if STR is down, try swate alpha
+    else:
+        request = requests.get(
+            "https://swate-alpha.nfdi4plants.org/api/ITemplateAPIv1/getTemplates"
         )
-        writeLogJson(
-            "getTemplates",
-            500,
-            startTime,
-            f"There was an error retrieving the swate templates! ERROR: {templateJson}",
-        )
-        raise HTTPException(
-            status_code=request.status_code,
-            detail="Couldn't receive swate templates",
-        )
+        # if swate alpha is also down, return error
+        if not request.ok:
+            logging.error(
+                f"There was an error retrieving the swate templates! ERROR: {templateJson}"
+            )
+            writeLogJson(
+                "getTemplates",
+                500,
+                startTime,
+                f"There was an error retrieving the swate templates! ERROR: {templateJson}",
+            )
+            raise HTTPException(
+                status_code=request.status_code,
+                detail="Couldn't receive swate templates",
+            )
+        try:
+            templateJson = request.json()
+        except:
+            templateJson = {}
+
+        # try the old way to list the templates
+        try:
+            templateList = [json.loads(x) for x in templateJson]
+
+            # include list of custom templates
+            templatePath = os.environ.get("BACKEND_SAVE") + "templates"
+            listOfTemplates = os.listdir(templatePath)
+
+            for entry in listOfTemplates:
+                with open(templatePath + "/" + entry, "r") as f:
+                    data = json.load(f)
+                    templateList.append(data)
+                    f.close()
+        except:
+            pass
 
     logging.info("Sent list of swate templates to client!")
     writeLogJson(
@@ -103,14 +109,11 @@ async def getTemplates() -> Templates:
         200,
         startTime,
     )
-    # return the templates
-    try:
-        return Templates(templates=templateList)
-    except:
-        return Templates(templates=templateList2)
+
+    return Templates(templates=templateList)
 
 
-# gets a specific template by its id (from swate) UNUSED
+# gets a specific template by its id (from swate) DEPRECATED
 @router.get(
     "/getTemplate",
     summary="Retrieve the specific template",
@@ -319,6 +322,7 @@ async def getTermSuggestionsByParentTerm(
     "/getTermSuggestions",
     summary="Retrieve Term suggestions by given input",
     status_code=status.HTTP_200_OK,
+    deprecated=True,
     include_in_schema=False,
 )
 async def getTermSuggestions(input: str, n=20) -> Terms:
