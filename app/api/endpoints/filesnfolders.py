@@ -161,6 +161,28 @@ def removeFromGitAttributes(
     )
 
 
+def fileChecker(id: int, name: str, totalChunks: int):
+    for chunk in range(totalChunks):
+        try:
+            f = open(
+                f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
+                "rb",
+            )
+            f.close()
+        except FileNotFoundError:
+            logging.error(
+                f"File {id}-{name}.{chunk} not found in cache! Requesting new upload!"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"File {id}-{name}.{chunk} not found in cache! Please upload the file again!",
+                headers={
+                    "missing-package": str(chunk),
+                    "Access-Control-Expose-Headers": "missing-package",
+                },
+            )
+
+
 # either caches the given byte chunk or uploads the file directly (merges all the byte chunks as soon as all have been received)
 @router.post(
     "/uploadFile",
@@ -190,9 +212,7 @@ async def uploadFile(
             "Content-Type": "application/json",
         }
     except:
-        logging.error(
-            f"uploadFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
-        )
+        logging.error(f"uploadFile Request couldn't be processed! Body: {request.body}")
         writeLogJson(
             "uploadFile",
             400,
@@ -220,6 +240,8 @@ async def uploadFile(
 
     # if the current chunk is the last chunk, merge all chunks together and write them into the temporary file
     if chunkNumber + 1 == totalChunks:
+        fileChecker(id, name, totalChunks)
+
         for chunk in range(totalChunks):
             f = open(
                 f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
@@ -308,9 +330,7 @@ async def uploadFile(
                     )
 
                 if r.status_code == 401:
-                    logging.warning(
-                        f"Client cookie not authorized! Cookies: {request.cookies}"
-                    )
+                    logging.warning(f"Client cookie not authorized!")
                     writeLogJson(
                         "uploadFile",
                         401,
@@ -879,9 +899,7 @@ async def deleteFile(
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client is not authorized to delete the file! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client is not authorized to delete the file!")
         writeLogJson(
             "deleteFile",
             401,
@@ -942,9 +960,7 @@ async def deleteFolder(
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client is not authorized to delete the folder! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client is not authorized to delete the folder!")
         writeLogJson(
             "deleteFolder",
             401,
@@ -1052,9 +1068,7 @@ async def createFolder(request: Request, folder: folderContent, token: commonTok
 
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client not authorized to create new folder! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client not authorized to create new folder!")
         writeLogJson(
             "createFolder",
             401,
@@ -1150,9 +1164,7 @@ async def renameFolder(
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client is not authorized to rename the folder! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client is not authorized to rename the folder!")
         writeLogJson(
             "deleteFolder",
             401,
