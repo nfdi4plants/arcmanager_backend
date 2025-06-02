@@ -247,7 +247,7 @@ def startRequest(request: Request, token: commonToken, startTime: float, endpoin
         target = getTarget(token["target"])
     except:
         logging.warning(
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
+            f"Client connected with no valid cookies/Client is not logged in"
         )
         writeLogJson(
             endpoint,

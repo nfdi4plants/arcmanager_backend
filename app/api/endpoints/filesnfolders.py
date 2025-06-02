@@ -235,6 +235,26 @@ async def uploadFile(
     f.write(file)
     f.close()
 
+    # check every 20th chunk if the token is still valid
+    if chunkNumber % 20 == 0:
+        # check if user token is still valid by requesting the repository tree
+        arc = requests.head(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&ref={branch}",
+            headers=header,
+        )
+        if not arc.ok:
+            logging.warning(f"Token expired!")
+            writeLogJson(
+                "uploadFile",
+                arc.status_code,
+                startTime,
+                f"Token expired!",
+            )
+            raise HTTPException(
+                status_code=arc.status_code,
+                detail=f"Token expired! Please refresh your session!",
+            )
+
     # open up a new hash
     shasum = hashlib.new("sha256")
 
