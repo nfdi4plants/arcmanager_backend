@@ -196,7 +196,7 @@ async def validateStudy(
     return studySection
 
 
-async def validateContacts(request: Request, id: int, token: commonToken) -> list:
+async def validateContacts(request: Request, id: int, token: commonToken) -> list[str | bool]:
     try:
         investigation: list = await arc_file(
             id, "isa.investigation.xlsx", request, token
@@ -207,11 +207,13 @@ async def validateContacts(request: Request, id: int, token: commonToken) -> lis
             detail="No isa.investigation.xlsx found! ARC is not valid!",
         )
 
-    contacts = []
+    contacts: list[str | bool] = []
 
     counter = 1
 
     lastName = getField(investigation, "Investigation Person Last Name")[counter]
+    if not (isinstance(lastName, str) and lastName != ""):
+        contacts.append("Last Name is missing")
 
     while isinstance(lastName, str) and lastName != "":
         try:
@@ -224,23 +226,27 @@ async def validateContacts(request: Request, id: int, token: commonToken) -> lis
             counter
         ]
 
+        isContactsCompleteValid = True
+
         # check first name
-        if isinstance(firstName, str) and firstName != "":
-            # check email
-            if isinstance(email, str) and validMail(email):
-                # check affiliation
-                if isinstance(affiliation, str) and affiliation != "":
-                    # check orcid
-                    if isinstance(orcid, str) and validORCID(orcid):
-                        contacts.append(True)
-                    else:
-                        contacts.append("ORCID is missing or not valid!")
-                else:
-                    contacts.append("Affiliation is missing!")
-            else:
-                contacts.append("Email missing or not valid!")
-        else:
+        if not (isinstance(firstName, str) and firstName != ""):
             contacts.append("First Name is missing!")
+            isContactsCompleteValid = False
+        # check email
+        if not (isinstance(email, str) and validMail(email)):
+            contacts.append("Email missing or not valid!")
+            isContactsCompleteValid = False
+        # check affiliation
+        if not (isinstance(affiliation, str) and affiliation != ""):
+            contacts.append("Affiliation is missing!")
+            isContactsCompleteValid = False
+        # check orcid
+        if not (isinstance(orcid, str) and validORCID(orcid)):
+            contacts.append("ORCID is missing or not valid!")
+            isContactsCompleteValid = False
+
+        if isContactsCompleteValid:
+            contacts.append(isContactsCompleteValid)
 
         counter += 1
         # if there is no next entry, break the loop
@@ -255,7 +261,7 @@ async def validateContacts(request: Request, id: int, token: commonToken) -> lis
 
 
 # check whether the necessary folders and files are present
-def checkContent(arc: Arc, content: list) -> bool | str:
+def checkContent(arc: Arc, content: list[str]) -> bool | str:
     # if the name is found in the list, remove it
     for entry in arc.Arc:
         if entry.name in content:
