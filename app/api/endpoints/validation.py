@@ -2,21 +2,14 @@ import re
 from typing import Annotated
 from fastapi import (
     APIRouter,
-    Body,
-    Cookie,
     Depends,
     HTTPException,
     Query,
     status,
-    Response,
     Request,
-    Header,
 )
 
 import json
-import os
-import requests
-import re
 
 import time
 import datetime
@@ -24,7 +17,6 @@ import datetime
 from app.models.gitlab.arc import Arc
 from app.api.endpoints.projects import (
     arc_file,
-    commitFile,
     arc_path,
     arc_tree,
     getAssays,
