@@ -1,4 +1,3 @@
-from enum import Enum
 from typing import Annotated
 from fastapi import (
     APIRouter,
@@ -13,9 +12,12 @@ from fastapi import (
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.encoders import jsonable_encoder
 
+import subprocess
+
 # gitlab api commits need base64 encoded content
 import base64
 
+import shutil
 import json
 import os
 import requests
@@ -36,7 +38,7 @@ from cryptography.fernet import Fernet
 from app.models.gitlab.banner import Banner, Banners
 from app.models.gitlab.file import FileContent
 from app.models.gitlab.targets import Targets
-from pdf2image import convert_from_bytes  # type: ignore
+from pdf2image import convert_from_bytes
 
 # paths in get requests need to be parsed to uri encoded strings
 from urllib.parse import quote
@@ -59,28 +61,19 @@ from app.models.gitlab.input import (
     newIsa,
     syncAssayContent,
     syncStudyContent,
+    InvenioContent,
 )
 from app.models.gitlab.projects import Projects
 from app.models.gitlab.arc import Arc
 
 router = APIRouter()
 
-logging.basicConfig(
-    filename="backend.log",
-    filemode="a",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
-
-logging.getLogger("multipart").setLevel(logging.INFO)
-
 # request sessions to retry the important requests
 retry = Retry(
     total=5,
     backoff_factor=4,
     status_forcelist=[500, 502, 429, 503, 504],
-    allowed_methods=["POST", "PUT", "HEAD"],
+    allowed_methods=["POST", "PUT", "HEAD", "GET"],
 )
 
 adapter = HTTPAdapter(max_retries=retry)
@@ -100,7 +93,7 @@ def sanitizeInput(input: str | list) -> str:
     return input
 
 
-# Match the given target repo with the address name in the env file (default is the gitlab dev server)
+# Match the given target repo with the address name in the env file (default is the tübingen gitlab)
 def getTarget(target: str) -> str:
     match target.lower():
         case "dev":
@@ -119,17 +112,6 @@ def getTarget(target: str) -> str:
             return "GITLAB_TUEBINGEN"
 
 
-# get the username using the id
-async def getUserName(target: str, userId: int, access_token: str) -> str:
-    header = {"Authorization": "Bearer " + access_token}
-    userInfo = requests.get(
-        f"{os.environ.get(getTarget(target))}/api/v4/users/{userId}",
-        headers=header,
-    ).json()
-
-    return userInfo["name"]
-
-
 # decrypt the cookie data with the corresponding public key
 def getData(data: Annotated[str, Cookie()]):
     # get public key from .env to decode data (in form of a byte string)
@@ -141,7 +123,6 @@ def getData(data: Annotated[str, Cookie()]):
 
     try:
         decodedToken = jwt.decode(data, public_key, algorithms=["RS256", "HS256"])
-
         fernetKey = os.environ.get("FERNET").encode()
         decodedToken["gitlab"] = (
             Fernet(fernetKey).decrypt(decodedToken["gitlab"].encode()).decode()
@@ -205,9 +186,7 @@ async def checkAssayLink(
 
             for entry in studyTest:
                 if "Study Assay File Name" in entry:
-                    logging.debug(
-                        f"Syncing {path} into {study} after link was found..."
-                    )
+                    logging.debug(f"Link found; Syncing {path} into {study} ...")
                     if path in entry:
                         syncData = syncAssayContent(
                             id=id,
@@ -262,6 +241,28 @@ async def checkStudyLink(
         return False
 
 
+def startRequest(request: Request, token: commonToken, startTime: float, endpoint: str):
+    try:
+        header = {"Authorization": "Bearer " + token["gitlab"]}
+        target = getTarget(token["target"])
+    except:
+        logging.warning(
+            f"Client connected with no valid cookies/Client is not logged in"
+        )
+        writeLogJson(
+            endpoint,
+            401,
+            startTime,
+            f"Client connected with no valid cookies/Client is not logged in.",
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="You are not authorized! Please authorize or refresh session!",
+        )
+
+    return header, target
+
+
 # get a list of all arcs accessible to the user
 @router.get(
     "/arc_list",
@@ -279,24 +280,17 @@ async def list_arcs(
     ] = False,
     page: Annotated[int, Query(ge=1)] = 1,
 ) -> Projects:
+    """
+    Get a list of available ARCs stored in the DataHUB:
+
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param owned: Whether the ARCs should be filtered to show only those ARCs where the user is a member of
+    :param page: Which page to show (every page contains 20 ARCs)
+    \f
+    """
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_list",
-            401,
-            startTime,
-            f"Client connected with no valid cookies/Client is not logged in.",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not logged in",
-        )
+
+    header, target = startRequest(request, token, startTime, "arc_list")
 
     arcList = []
 
@@ -432,23 +426,8 @@ async def list_arcs_head(
     ] = False,
 ):
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_list_head",
-            401,
-            startTime,
-            f"Client connected with no valid cookies/Client is not logged in.",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not logged in",
-        )
+
+    header, target = startRequest(request, token, startTime, "arc_list_head")
 
     if owned:
         # first find out how many pages of arcs there are for us to get (check if there are more than 100 arcs at once available)
@@ -558,6 +537,13 @@ async def list_arcs_head(
 async def public_arcs(
     target: Targets, page: Annotated[int, Query(ge=1)] = 1
 ) -> Projects:
+    """
+    Get a list of publicly available ARCs stored in the DataHUB:
+
+    :param target: The target DataHUB
+    :param page: Which page to show (every page contains 20 ARCs)
+    \f
+    """
     startTime = time.time()
     try:
         target = getTarget(target)
@@ -632,24 +618,16 @@ async def arc_tree(
     request: Request,
     branch: Annotated[str, Query()] = "main",
 ) -> Arc:
+    """
+    Get the frontpage list of files and folders of the ARC
+
+    :param id: The id of the ARC
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client has no rights to view this ARC! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_tree",
-            401,
-            startTime,
-            f"Client has no rights to view this ARC!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC",
-        )
+    header, target = startRequest(request, token, startTime, "arc_tree")
 
     arc = requests.get(
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/tree?per_page=100&ref={branch}",
@@ -701,24 +679,18 @@ async def arc_path(
     page: Annotated[int, Query(ge=1)] = 1,
     branch: Annotated[str, Query()] = "main",
 ) -> Arc:
+    """
+    Get the files and folders on the given path
+
+    :param id: The id of the ARC
+    :param path: Path requested containing the desired files and folders
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param pages: Page number of the list of data (each page holds 20 entries)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_path",
-            401,
-            startTime,
-            f"Client is not authorized to view ARC {id}",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC",
-        )
+    header, target = startRequest(request, token, startTime, "arc_path")
 
     try:
         arcPath = session.get(
@@ -733,15 +705,23 @@ async def arc_path(
             detail=f"Couldn't retrieve content of the path! Error: {e}",
         )
 
+    # if total pages header is available, forward it
+    try:
+        pages = int(arcPath.headers["X-Total-Pages"])
+        header = {
+            "total-pages": str(pages),
+            "Access-Control-Expose-Headers": "total-pages",
+        }
+    except:
+        header = {}
+
     try:
         pathJson = arcPath.json()
-        pages = int(arcPath.headers["X-Total-Pages"])
-
     except:
-        pathJson = {
-            "error": "Parsing Error",
-            "error_description": "There was an error parsing the path data for the ARC!",
-        }
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Parsing Error! Error: There was an error parsing the path data for the ARC!!",
+        )
 
     # raise error if the given path gives no result
     if not arcPath.ok:
@@ -761,10 +741,7 @@ async def arc_path(
     writeLogJson("arc_path", 200, startTime)
     return JSONResponse(
         jsonable_encoder(Arc(Arc=pathJson)),
-        headers={
-            "total-pages": str(pages),
-            "Access-Control-Expose-Headers": "total-pages",
-        },
+        headers=header,
     )
 
 
@@ -783,30 +760,31 @@ async def arc_file(
     token: commonToken,
     branch: str = "main",
 ) -> FileContent | list[list] | dict:
+    """
+    Get the specific file
+
+    :param id: The id of the ARC
+    :param path: Path of the requested file
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to get the file! Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "arc_file",
-            401,
-            startTime,
-            f"Client is not authorized to get the file!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to get this file",
-        )
+    header, target = startRequest(request, token, startTime, "arc_file")
+
     # get HEAD data for fileSize
     # url encode the path
-    fileHead = requests.head(
-        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
-        headers=header,
-    )
+    try:
+        fileHead = session.head(
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}?ref={branch}",
+            headers=header,
+        )
+    except:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Error reaching the Datahub! Please try again later!",
+        )
+
     # raise error if file not found
     if not fileHead.ok:
         logging.error(f"File not found! Path: {path}")
@@ -832,7 +810,7 @@ async def arc_file(
         total=5,
         backoff_factor=4,
         status_forcelist=[500, 400, 502, 429, 503, 504, 404],
-        allowed_methods=["POST", "PUT", "HEAD"],
+        allowed_methods=["POST", "PUT", "HEAD", "GET"],
     )
 
     altAdapter = HTTPAdapter(max_retries=altRetry)
@@ -880,7 +858,7 @@ async def arc_file(
     # if its not a isa file, return the default metadata of the file to the frontend
     else:
         # if file is too big, skip requesting it
-        if int(fileSize) > 50000000:
+        if int(fileSize) > 52428800:
             logging.warning("File too large! Size: " + fileSizeReadable(int(fileSize)))
             writeLogJson(
                 "arc_file",
@@ -1008,6 +986,13 @@ async def arc_file(
     response_description="Response of the commit request from Gitlab.",
 )
 async def saveFile(request: Request, isaContent: isaContent, token: commonToken):
+    """
+    Write and save the specific data to the isa file
+
+    :param isaContent: Content of the request body containing required data (filepath, arcid, branch, ...)
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    \f
+    """
     startTime = time.time()
     try:
         isaContent.isaInput = sanitizeInput(isaContent.isaInput)
@@ -1109,6 +1094,16 @@ async def commitFile(
     branch: str = "main",
     message: str = "",
 ):
+    """
+    Update the file with the given content (content either from the backend (after saveFile) or from the request body)
+
+    :param id: The id of the ARC
+    :param repoPath: Path of the file on the ARC
+    :param token: The user token containing the api token and target datahub (stored in cookies)
+    :param filePath: Path of the file stored in the backend (used by saveFile for isa file changes)
+    :param branch: The name of the branch (default is main)
+    \f
+    """
     startTime = time.time()
     # get the data from the body
     requestBody = await request.body()
@@ -1222,7 +1217,7 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Please login to create a new ARC",
+            detail="Please login to create a new ARC or refresh the session!",
         )
     # read out the new arc properties
     try:
@@ -1296,16 +1291,15 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
     # replace empty space with underscores
     investIdentifier = investIdentifier.replace(" ", "_")
 
-    # unprotect the main branch
+    # allow force push
     try:
-        branchUnProtect = requests.delete(
+        branchForcePush = requests.patch(
             os.environ.get(target)
-            + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}",
+            + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}?allow_force_push=true",
             headers=header,
         )
     except Exception as e:
         logging.error(e)
-        writeLogJson("createArc", 500, startTime, e)
 
     ## commit the folders and the investigation isa to the repo
 
@@ -1443,6 +1437,18 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
             filePath=f"{os.environ.get('BACKEND_SAVE')}{token['target']}-{newArcJson['id']}/isa.investigation.xlsx",
             branch=newArcJson["default_branch"],
         )
+
+        # allow force push
+        if not branchForcePush.ok:
+            try:
+                branchForcePush = requests.patch(
+                    os.environ.get(target)
+                    + f"/api/v4/projects/{newArcJson['id']}/protected_branches/{newArcJson['default_branch']}?allow_force_push=true",
+                    headers=header,
+                )
+            except Exception as e:
+                logging.error(e)
+
         writeLogJson("createArc", 201, startTime)
     return [projectPost.content, commitRequest.content]
 
@@ -1479,7 +1485,7 @@ async def repairArc(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Please login to create a new ARC",
+            detail="Please login to repair the ARC or refresh the session!",
         )
 
     # read out the new arc properties
@@ -1651,7 +1657,8 @@ async def createIsa(request: Request, isaContent: newIsa, token: commonToken):
             f"Client not authorized to create new ISA!",
         )
         raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED, detail="Not authorized to create new ISA"
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to create new ISA! Please authorize or refresh session!",
         )
 
     # load the isa properties
@@ -1865,21 +1872,7 @@ async def getChanges(
     branch: str = "main",
 ) -> list:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
-        writeLogJson(
-            "getChanges",
-            401,
-            startTime,
-            f"No authorized Cookie found!",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
-        )
+    header, target = startRequest(request, token, startTime, "getChanges")
 
     commits = requests.get(
         f"{os.environ.get(target)}/api/v4/projects/{id}/repository/commits?per_page=100&ref_name={branch}",
@@ -1933,7 +1926,7 @@ async def getStudies(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     writeLogJson("getStudies", 200, startTime)
@@ -1965,7 +1958,7 @@ async def getAssays(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     writeLogJson("getAssays", 200, startTime)
@@ -1998,7 +1991,7 @@ async def syncAssay(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # get the necessary information from the request
@@ -2068,7 +2061,7 @@ async def syncAssay(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="No authorized session cookie found",
+            detail="No authorized session cookie found! Please authorize or refresh session!",
         )
 
     logging.info(f"Sent file {pathToStudy} to ARC {id}")
@@ -2101,7 +2094,7 @@ async def syncStudy(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # get the necessary information from the request
@@ -2173,7 +2166,7 @@ async def syncStudy(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="No authorized session cookie found",
+            detail="No authorized session cookie found! Please authorize or refresh session!",
         )
 
     logging.info(f"Sent file isa.investigation.xlsx to ARC {id}")
@@ -2253,23 +2246,8 @@ async def getBranches(
     request: Request, id: Annotated[int, Query(ge=1)], token: commonToken
 ) -> list:
     startTime = time.time()
-    try:
-        header = {"Authorization": "Bearer " + token["gitlab"]}
-        target = getTarget(token["target"])
-    except:
-        logging.warning(
-            f"Client is not authorized to view ARC {id}; Cookies: {request.cookies}"
-        )
-        writeLogJson(
-            "getBranches",
-            401,
-            startTime,
-            f"Client is not authorized to view ARC {id}",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="You are not authorized to view this ARC",
-        )
+    header, target = startRequest(request, token, startTime, "getBranches")
+
     try:
         # request branches
         branches = requests.get(
@@ -2288,7 +2266,7 @@ async def getBranches(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
     writeLogJson("getBranches", 200, startTime)
     try:
@@ -2326,7 +2304,7 @@ async def addDatamap(
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized to create new datamap",
+            detail="Not authorized to create new datamap! Please authorize or refresh session!",
         )
 
     # load the isa properties
@@ -2411,20 +2389,7 @@ async def addDatamap(
 )
 async def getBanner(request: Request, token: commonToken) -> Banner | None:
     startTime = time.time()
-    try:
-        target = getTarget(token["target"])
-    except:
-        logging.warning(f"Client not authorized! Cookies: {request.cookies}")
-        writeLogJson(
-            "addDatamap",
-            401,
-            startTime,
-            f"Client not authorized!",
-        )
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail="Not authorized!",
-        )
+    header, target = startRequest(request, token, startTime, "getBanner")
 
     # send the data to the repo
     bannerRequest = requests.get(
@@ -2472,3 +2437,114 @@ async def getBanner(request: Request, token: commonToken) -> Banner | None:
             status_code=500,
             detail=f"Couldn't receive newest Datahub banner!",
         )
+
+
+@router.post(
+    "/publishArc",
+    summary="Uploads a zip of the arc to invenio",
+    description="The arc is archived using git archive and uploaded to invenio (fdat) for long time storage",
+    status_code=status.HTTP_200_OK,
+)
+async def exportProject(
+    request: Request, token: commonToken, invenioData: InvenioContent
+):
+    try:
+        target = getTarget(token["target"])
+        arcName = invenioData.arcName
+        namespace = invenioData.namespace
+        invenioPAT = invenioData.invenioPAT
+        invenioURL = invenioData.invenioURL
+    except:
+        raise HTTPException(status_code=400, detail="Missing information!")
+
+    workDir = f"{os.environ.get('BACKEND_SAVE')}cache"
+
+    os.chdir(workDir)
+
+    # cleanup any folders with the same name currently existing
+    try:
+        shutil.rmtree(f"{workDir}/{arcName}")
+        os.remove(f"{workDir}/{arcName}.zip")
+    except Exception as e:
+        logging.warning(str(e))
+
+    try:
+        gitClone = subprocess.run(
+            [
+                "git",
+                "clone",
+                f"https://oauth2:{token['gitlab']}@{os.environ.get(target).split('://')[1]}/{namespace}.git",
+            ]
+        )
+    except:
+        logging.warning("Git clone failed. Folder probably already existing!")
+
+    logging.debug(gitClone)
+
+    os.chdir(f"{workDir}/{arcName}")
+
+    gitArchive = subprocess.run(
+        ["git", "archive", "--output=" + workDir + f"/{arcName}.zip", "HEAD"]
+    )
+
+    logging.debug(gitArchive)
+
+    try:
+        invenioId = invenioURL.split("/")[-1]
+        invenioAddress = f"{invenioURL.split('/uploads')[0]}/api"
+    except:
+        raise HTTPException(status_code=400, detail="Invenio Address is not valid!")
+
+    uploadHeader = {
+        "Content-Type": "application/octet-stream",
+        "Authorization": f"Bearer {invenioPAT}",
+    }
+
+    normalHeader = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {invenioPAT}",
+    }
+
+    payload = [{"key": f"{arcName}.zip"}]
+
+    fileCreation = requests.post(
+        f"{invenioAddress}/records/{invenioId}/draft/files",
+        headers=normalHeader,
+        data=json.dumps(payload),
+    )
+
+    try:
+        with open(f"{workDir}/{arcName}.zip", "rb") as f:
+            fileData = f.read()
+    except:
+        logging.error("Could not find/create arc zip file!")
+        raise HTTPException(status_code=500, detail="Error archiving the arc!")
+
+    try:
+        assert fileCreation.ok
+
+        testUpload = requests.put(
+            f"{invenioAddress}/records/{invenioId}/draft/files/{arcName}.zip/content",
+            headers=uploadHeader,
+            data=fileData,
+        )
+
+        assert testUpload.ok
+
+        fileCommit = requests.post(
+            f"{invenioAddress}/records/{invenioId}/draft/files/{arcName}.zip/commit",
+            headers=normalHeader,
+        )
+
+        assert fileCommit.ok
+    except Exception as e:
+        logging.error(str(e))
+        raise HTTPException(status_code=500, detail="Arc could not be published!")
+    try:
+        os.chdir(f"{workDir}")
+        shutil.rmtree(f"{workDir}/{arcName}")
+        os.remove(f"{workDir}/{arcName}.zip")
+    except Exception as e:
+        logging.warning(f"Could not remove directory. Remove them manually! {e}")
+
+    return "Your ARC was uploaded successfully!"

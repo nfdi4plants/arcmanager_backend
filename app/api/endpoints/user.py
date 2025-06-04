@@ -4,14 +4,11 @@ import time
 from typing import Annotated
 from fastapi import (
     APIRouter,
-    Cookie,
     Depends,
     HTTPException,
     Query,
     status,
-    Response,
     Request,
-    Header,
 )
 import requests
 
@@ -20,14 +17,6 @@ from app.models.gitlab.input import userContent
 from app.models.gitlab.user import Users
 
 router = APIRouter()
-
-logging.basicConfig(
-    filename="backend.log",
-    filemode="w",
-    format="%(asctime)s-%(levelname)s-%(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-    level=logging.DEBUG,
-)
 
 commonToken = Annotated[str, Depends(getData)]
 
@@ -54,7 +43,7 @@ async def getUser(request: Request, token: commonToken) -> Users:
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     userList = []
@@ -118,7 +107,7 @@ async def addUser(request: Request, userData: userContent, token: commonToken):
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # get the id and name of the user
@@ -179,7 +168,7 @@ async def getArcUser(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # request to get all users for the specific arc
@@ -244,7 +233,7 @@ async def removeUser(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     # request to delete the given user
@@ -296,7 +285,7 @@ async def editUser(request: Request, userData: userContent, token: commonToken):
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
 
     id = userData.id
@@ -355,7 +344,7 @@ async def getGroups(request: Request, token: commonToken) -> list:
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorized cookie found!",
+            detail="No authorized cookie found! Please authorize or refresh session!",
         )
     try:
         groupsJson = groups.json()

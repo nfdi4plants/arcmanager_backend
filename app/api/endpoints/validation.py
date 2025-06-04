@@ -1,4 +1,3 @@
-import re
 from typing import Annotated
 from fastapi import (
     APIRouter,
@@ -10,7 +9,7 @@ from fastapi import (
 )
 
 import json
-
+import re
 import time
 import datetime
 

@@ -1,9 +1,12 @@
+import logging
 import os
 
 import dotenv
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from app.api.routers import api_router
 import urllib3.util.connection
@@ -17,20 +20,30 @@ The code for the front- and backend can be found on the DataPLANT Github here:
 [Backend](https://github.com/nfdi4plants/arcmanager_backend)
 """
 
+# config the default python logger
+logging.basicConfig(
+    filename="backend.log",
+    filemode="a",
+    format="%(asctime)s-%(levelname)s-%(message)s",
+    datefmt="%d-%b-%y %H:%M:%S",
+    level=logging.DEBUG,
+)
+
 app = FastAPI(
     title="ARCmanager API",
     summary="ARCmanager API enables you to read out and write to your ARC in any datahub",
     docs_url="/arcmanager/api/v1/docs",
     openapi_url="/arcmanager/api/v1/openapi.json",
-    version="1.1.3",
+    version="1.1.13",
     description=description,
 )
 
-# clear the current log
+# clear the current custom log
 with open("log.json", "w") as log:
     log.write("[]")
 log.close()
 
+# load the environment variables from the .env file
 load_dotenv()
 
 # valid frontend url origins
@@ -42,9 +55,6 @@ origins = [
     "https://nfdi4plants.de/arcmanager/app/index.html",
     "https://nfdi4plants.de",
 ]
-
-# requests module tries ipv6 first for every request which creates problems with the plantmicrobe hub; this disables ipv6 and forces ipv4, solving the issue for now ---- currently disabled as ipv6 seems to be working fine for now
-# urllib3.util.connection.HAS_IPV6 = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,3 +70,20 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+# force the app to use IPv4 (preventing issues with IPv6)
+urllib3.util.connection.HAS_IPV6 = False
+
+
+# in case of a validation error, log the exception including the cookies to see where the error is coming from
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    exc_str = f"{exc}".replace("\n", " ").replace("   ", " ")
+    logging.error(f"{exc}")
+    content = {
+        "status_code": 422,
+        "detail": f"Try clearing your browser data and cookies! ERROR: {exc_str}",
+    }
+    return JSONResponse(
+        content=content, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+    )
