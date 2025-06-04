@@ -84,6 +84,7 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     match type:
         case "investigation":
             sheetName = "isa_investigation"
+            sheetName2 = "isa_investigation"
 
         case "study":
             sheetName2 = "Study"
@@ -109,7 +110,8 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
     try:
         isaFile = pd.read_excel(pathName, sheet_name=sheetName, engine="openpyxl")
 
-    except:
+    except Exception as e:
+        print(f"Exception: {e}")
         try:
             sheetName = sheetName2
             isaFile = pd.read_excel(pathName, sheet_name=sheetName2, engine="openpyxl")
@@ -552,7 +554,11 @@ def appendStudy(pathToStudy: str, pathToInvest: str, studyName: str):
     # finally fill the data in the correct rows
     for x in range(len(study)):
         for y in range(len(study.columns)):
-            invest.iat[rowIndex + x, y] = study.iat[x, y]
+            try:
+                invest.iat[rowIndex + x, y] = study.iat[x, y]
+            except Exception as e:
+                invest.loc[len(invest)] = {"ONTOLOGY SOURCE REFERENCE": "OTHER"}
+                invest.iat[rowIndex + x, y] = study.iat[x, y]
 
     try:
         # save the changes to the excel file
