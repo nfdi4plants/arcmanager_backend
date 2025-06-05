@@ -129,7 +129,7 @@ def getData(data: Annotated[str, Cookie()]):
         )
     except:
         logging.warning(
-            f"Client connected with no valid cookies/Client is not logged in. Cookies: {data}"
+            f"Client connected with no valid cookies/Client is not logged in."
         )
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
@@ -1114,9 +1114,7 @@ async def commitFile(
         targetRepo = token["target"]
 
     except:
-        logging.error(
-            f"SaveFile Request couldn't be processed! Cookies: {request.cookies} ; Body: {request.body}"
-        )
+        logging.error(f"SaveFile Request couldn't be processed! Body: {request.body}")
         writeLogJson(
             "commitFile",
             400,
@@ -1206,9 +1204,7 @@ async def createArc(request: Request, arcContent: arcContent, token: commonToken
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client not logged in for ARC creation! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client not logged in for ARC creation!")
         writeLogJson(
             "createArc",
             401,
@@ -1474,9 +1470,7 @@ async def repairArc(
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client not logged in for ARC creation! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client not logged in for ARC creation!")
         writeLogJson(
             "createArc",
             401,
@@ -1647,9 +1641,7 @@ async def createIsa(request: Request, isaContent: newIsa, token: commonToken):
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client not authorized to create new ISA! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client not authorized to create new ISA!")
         writeLogJson(
             "createISA",
             401,
@@ -1917,7 +1909,7 @@ async def getStudies(
             id=id, request=request, path="studies", token=token, branch=branch
         )
     except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        logging.warning(f"No authorized Cookie found!")
         writeLogJson(
             "getStudies",
             401,
@@ -1949,7 +1941,7 @@ async def getAssays(
             id=id, request=request, path="assays", token=token, branch=branch
         )
     except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        logging.warning(f"No authorized Cookie found!")
         writeLogJson(
             "getAssays",
             401,
@@ -1982,7 +1974,7 @@ async def syncAssay(
         target = token["target"]
 
     except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        logging.warning(f"No authorized Cookie found!")
         writeLogJson(
             "syncAssays",
             401,
@@ -2050,9 +2042,7 @@ async def syncAssay(
             f": synced {pathToAssay} to {pathToStudy}",
         )
     except:
-        logging.warning(
-            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client is not authorized to commit to ARC!")
         writeLogJson(
             "syncAssays",
             401,
@@ -2085,7 +2075,7 @@ async def syncStudy(
         target = token["target"]
 
     except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        logging.warning(f"No authorized Cookie found!")
         writeLogJson(
             "syncStudy",
             401,
@@ -2155,9 +2145,7 @@ async def syncStudy(
             f": synced {pathToStudy} to ISA investigation",
         )
     except:
-        logging.warning(
-            f"Client is not authorized to commit to ARC! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client is not authorized to commit to ARC!")
         writeLogJson(
             "syncStudy",
             401,
@@ -2257,7 +2245,7 @@ async def getBranches(
         branchJson = branches.json()
 
     except:
-        logging.warning(f"No authorized Cookie found! Cookies: {request.cookies}")
+        logging.warning(f"No authorized Cookie found!")
         writeLogJson(
             "getBranches",
             401,
@@ -2293,9 +2281,7 @@ async def addDatamap(
         }
         target = getTarget(token["target"])
     except:
-        logging.warning(
-            f"Client not authorized to create new datamap! Cookies: {request.cookies}"
-        )
+        logging.warning(f"Client not authorized to create new datamap!")
         writeLogJson(
             "addDatamap",
             401,
