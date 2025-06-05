@@ -1,6 +1,8 @@
+from io import BytesIO
 import os
 import re
 from typing import Annotated
+import urllib.parse
 from fastapi import (
     APIRouter,
     Depends,
@@ -15,6 +17,7 @@ import re
 import time
 import datetime
 
+from pydantic import BaseModel, Field
 import requests
 
 from app.models.gitlab.arc import Arc
@@ -315,46 +318,51 @@ def validORCID(orcid: str) -> bool:
 
 
 
-REQUIRED_TOP_LEVEL_CONTENT = [
-    ".arc",
-    "assays",
-    "runs",
-    "studies",
-    "workflows",
-    "isa.investigation.xlsx",
-]
-REQUIRED_ASSAY_CONTENT = ["dataset", "protocols", "isa.assay.xlsx"]
 
+from typing import Any
 
 class ArcValidator:
     """Class for ARC validation."""
 
-    def __init__(
-        self, arc_project_id: int, cookie: str, path: str = "", ref: str = "main"
-    ) -> None:
-        self.full_tree: list[str] = fetch_full_repo_tree(
-            arc_project_id, cookie, path, ref
+    REQUIRED_TOP_LEVEL_CONTENT: list[str] = [
+        ".arc",
+        "assays",
+        "runs",
+        "studies",
+        "workflows",
+        "isa.investigation.xlsx",
+    ]
+    REQUIRED_ASSAY_CONTENT: list[str] = ["dataset", "protocols", "isa.assay.xlsx"]
+    REQUIRED_STUDY_CONTENT: list[str] = ["resources", "protocols", "isa.study.xlsx"]
+    REQUIRED_INVESTIGATION_COLUMNS: dict[str, str] = {
+        "identifier": "Investigation Identifier",
+        "title": "Investigation Title",
+        "description": "Investigation Description",
+    }
+    ADDITIONAL_INVESTIGATION_COLUMNS: dict[str, str] = {
+        "last_name": "Investigation Person Last Name",
+        "first_name": "Investigation Person First Name",
+        "email": "Investigation Person Email",
+        "affiliation": "Investigation Person Affiliation",
+        "orcid": "Comment[ORCID]",
+        "submission_date": "Investigation Submission Date",
+        "release_date": "Investigation Public Release Date",
+    }
+
+
+
+
+    def __init__(self, arc_project_id: int, cookie: str) -> None:
+        self.full_tree: list[str] = self._fetch_full_repo_tree(
+            arc_project_id, cookie, "", "main"
         )
-        for it in self.full_tree:
-            print(it)
-        print("-" * 80)
-        self.assays: dict[str, list[str]] = self._get_contents("assays")
-        self.runs: dict[str, list[str]] = self._get_contents("runs")
-        self.studies: dict[str, list[str]] = self._get_contents("studies")
-        self.workflows: dict[str, list[str]] = self._get_contents("workflows")
-        print(self.assays)
-        print(self.runs)
-        print(self.studies)
-        print(self.workflows)
 
-        # contains_required_dirs = self.check_repo_structure(REQUIRED_TOP_LEVEL_CONTENT)
+        # contains_required_dirs = self.check_repo_structure()
         # print(contains_required_dirs)
-        validated_assays = self.check_assay_structures(REQUIRED_ASSAY_CONTENT)
-        print(f"{validated_assays=}")
+        validated_assays = self.check_assay_structures()
+        # print(f"{validated_assays=}")
 
-    def check_repo_structure(
-        self, required_top_level_content: list[str]
-    ) -> dict[str, bool]:
+    def check_repo_structure(self) -> dict[str, bool]:
         """Check if the ARC repository contains all required top-level directories
         and files.
 
@@ -367,33 +375,87 @@ class ArcValidator:
             boolean as value, indicating if the entry is present or not.
         """
         top_level_entries = [x.split("/", maxsplit=1)[0] for x in self.full_tree]
-        return {x: x in top_level_entries for x in required_top_level_content}
+        return {x: x in top_level_entries for x in self.REQUIRED_TOP_LEVEL_CONTENT}
 
-    def check_assay_structures(
-        self, required_assay_content: list[str]
+    def check_assay_structures(self) -> dict[str, dict[str, bool]]:
+        assays = self._get_dir_contents("assays")
+        return self._check_sub_dir_structures(assays, self.REQUIRED_ASSAY_CONTENT)
+
+    def check_study_structures(self) -> dict[str, dict[str, bool]]:
+        studies = self._get_dir_contents("studies")
+        return self._check_sub_dir_structures(studies, self.REQUIRED_STUDY_CONTENT)
+
+    def check_isa_investigation_file(self, excel_bytes: BytesIO):
+        if "isa.investigation.xlsx" not in self.full_tree:
+            raise ValueError("`isa.investigation.xlsx` missing in ARC")
+
+        sheets = pd.read_excel(excel_bytes, index_col=0, sheet_name=None)
+        try:
+            sheet = sheets[sheet_name]
+        except KeyError:
+            raise KeyError(f"No sheet named `{sheet_name}`")
+
+
+        validation_required_columns: dict[str, bool] = dict()
+        for key, value in self.REQUIRED_INVESTIGATION_COLUMNS.items():
+            if value not in sheet.index:
+                raise KeyError(f"{value} not found in isa.investigation.xlsx")
+
+            to_validate = sheet.loc[value]
+            is_valid = isinstance(to_validate, str) and to_validate != ""
+            validation_required_columns[key] = is_valid
+
+        validation_additional_columns: dict[str, list[bool]] = dict()
+        for key, value in self.ADDITIONAL_INVESTIGATION_COLUMNS.items():
+            if value not in sheet.index:
+                raise KeyError(f"{value} not found in isa.investigation.xlsx")
+
+            to_validate: list[Any] = [x for x in sheet.loc[value] if not pd.isna(x)]
+
+            match key:
+                case "last_name" | "first_name" | "affiliation":
+                    is_valid = [isinstance(x, str) and x != "" for x in to_validate]
+                case "email":
+                    is_valid = [validMail(x) for x in to_validate]
+                case "orcid":
+                    is_valid = [validORCID(x) for x in to_validate]
+                case "submission_data" | "release_date":
+                    # TODO: valiDate should only return boolean
+                    is_valid = [valiDate(x) for x in to_validate]
+                case _:
+                    raise NotImplementedError(f"No validation implemented for `{key}`.")
+
+            validation_additional_columns[key] = is_valid
+
+
+
+
+
+
+
+    def _check_sub_dir_structures(
+        self, dir_to_check: dict[str, list[str]], required_content: list[str]
     ) -> dict[str, dict[str, bool]]:
-        """Check if each assay contains all required directories and files.
+        """Check if a sub directory contains all required directories and files.
 
         Args:
-            required_assay_content: List of directory and file names that
+            required_content: List of directory and file names that
                 are required in an assay entry
 
         Returns:
-            Dictionary with the assay names as keys (str) and inner dictionaries
+            Dictionary with the names as keys (str) and inner dictionaries
             as values. The inner dictionary holds the names of the required
             content names as keys (str) and corresponding booleans as value,
             indicating if an entry is present or not.
         """
-        assay_validation: dict[str, dict[str, bool]] = dict()
-        for assay_name, assay_content in self.assays.items():
-            content_dirs = [x.split("/", maxsplit=1)[0] for x in assay_content]
-            assay_validation[assay_name] = {
-                x: x in content_dirs for x in required_assay_content
-            }
+        validated: dict[str, dict[str, bool]] = dict()
+        for name, content in dir_to_check.items():
+            content_dirs = [x.split("/", maxsplit=1)[0] for x in content]
+            validated[name] = {x: x in content_dirs for x in required_content}
 
-        return assay_validation
+        return validated
 
-    def _get_contents(self, dirname: str) -> dict[str, list[str]]:
+    def _get_dir_contents(self, dirname: str) -> dict[str, list[str]]:
         directory_lst = [
             x.split("/", maxsplit=1)[1]
             for x in self.full_tree
@@ -407,34 +469,77 @@ class ArcValidator:
 
         return directory_dict
 
+    def _get_excel_values_to_check(self, excel_bytes: BytesIO, sheet_name: str, keys: dict[str, str]) -> dict[str, list[Any]]:
+        sheets = pd.read_excel(excel_bytes, index_col=0, sheet_name=None)
+        try:
+            sheet = sheets[sheet_name]
+        except KeyError:
+            raise KeyError(f"No sheet named `{sheet_name}`")
 
-def fetch_full_repo_tree(
-    project_id: int, cookie: str, path: str = "", ref: str = "main"
-) -> list[str]:
-    token = getData(cookie)
-    target = getTarget(token["target"])
-    domain = os.environ.get(target)
-    url = f"{domain}/api/v4/projects/{project_id}/repository/tree"
-    headers = {"Authorization": f"Bearer {token['gitlab']}"}
+        rows_to_validate = {}
+        for origin_key,target_key in keys.items():
+            if target_key in sheet.index:
+                rows_to_validate[origin_key] = [x for x in sheet.loc[target_key] if not pd.isna(x)]
+            else:
+                raise KeyError(f"{target_key} not found in isa.investigation.xlsx")
 
-    tree: list[str] = []
-    page = 1
+        return rows_to_validate
 
-    while True:
-        params = {"ref": ref, "path": path, "per_page": 100, "page": page}
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        items = response.json()
-        if not items:
-            break
+    def _fetch_full_repo_tree(
+        self, project_id: int, cookie: str, path: str = "", ref: str = "main"
+    ) -> list[str]:
+        """Fetch the entire tree of the Gitlab repository.
 
-        for item in items:
-            if item["type"] == "tree":
-                # Recurse into subdirectory
-                tree.extend(fetch_full_repo_tree(project_id, cookie, item["path"], ref))
-            elif item["type"] == "blob":
-                tree.append(item["path"])
+        Args:
+            project_id: ID of the ARC.
+            cookie: Authorization cookie.
+            path: Path to start fetching. Default: "" for starting at top-level
+            ref: Branch for fetching. Default: 'main' branch
 
-        page += 1
+        Returns:
+            List of all full paths (str) files and directories in the Gitlab repo.
+        """
+        token = getData(cookie)
+        target = getTarget(token["target"])
+        domain = os.environ.get(target)
+        headers = {"Authorization": f"Bearer {token['gitlab']}"}
+        url = f"{domain}/api/v4/projects/{project_id}/repository/tree"
 
-    return tree
+        tree: list[str] = []
+        page = 1
+
+        while True:
+            params = {"ref": ref, "path": path, "per_page": 100, "page": page}
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            items = response.json()
+            if not items:
+                break
+
+            for item in items:
+                if item["type"] == "tree":
+                    # Recurse into subdirectory
+                    tree.extend(
+                        self._fetch_full_repo_tree(
+                            project_id, cookie, item["path"], ref
+                        )
+                    )
+                elif item["type"] == "blob":
+                    tree.append(item["path"])
+
+            page += 1
+
+        return tree
+
+    def _fetch_raw_file(
+        self, project_id: int, cookie: str, filepath: str, ref: str = "main"
+    ) -> BytesIO:
+        token = getData(cookie)
+        target = getTarget(token["target"])
+        domain = os.environ.get(target)
+        headers = {"Authorization": f"Bearer {token['gitlab']}"}
+        encoded_path = urllib.parse.quote_plus(filepath)
+        url = f"{domain}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw?ref={ref}"
+
+        response = requests.get(url, headers=headers)
+        return BytesIO(response.content)
