@@ -1,3 +1,5 @@
+import os
+import re
 from typing import Annotated
 from fastapi import (
     APIRouter,
@@ -9,21 +11,21 @@ from fastapi import (
 )
 
 import json
-
 import re
-
 import time
 import datetime
+
+import requests
 
 from app.models.gitlab.arc import Arc
 from app.api.endpoints.projects import (
     arc_file,
-    commitFile,
     arc_path,
     arc_tree,
     getAssays,
     getData,
     getStudies,
+    getTarget,
     writeLogJson,
 )
 
@@ -198,7 +200,7 @@ async def validateStudy(
     return studySection
 
 
-async def validateContacts(request: Request, id: int, token: commonToken) -> list:
+async def validateContacts(request: Request, id: int, token: commonToken) -> list[str | bool]:
     try:
         investigation: list = await arc_file(
             id, "isa.investigation.xlsx", request, token
@@ -209,11 +211,13 @@ async def validateContacts(request: Request, id: int, token: commonToken) -> lis
             detail="No isa.investigation.xlsx found! ARC is not valid!",
         )
 
-    contacts = []
+    contacts: list[str | bool] = []
 
     counter = 1
 
     lastName = getField(investigation, "Investigation Person Last Name")[counter]
+    if not (isinstance(lastName, str) and lastName != ""):
+        contacts.append("Last Name is missing")
 
     while isinstance(lastName, str) and lastName != "":
         try:
@@ -226,23 +230,27 @@ async def validateContacts(request: Request, id: int, token: commonToken) -> lis
             counter
         ]
 
+        isContactsCompleteValid = True
+
         # check first name
-        if isinstance(firstName, str) and firstName != "":
-            # check email
-            if isinstance(email, str) and validMail(email):
-                # check affiliation
-                if isinstance(affiliation, str) and affiliation != "":
-                    # check orcid
-                    if isinstance(orcid, str) and validORCID(orcid):
-                        contacts.append(True)
-                    else:
-                        contacts.append("ORCID is missing or not valid!")
-                else:
-                    contacts.append("Affiliation is missing!")
-            else:
-                contacts.append("Email missing or not valid!")
-        else:
+        if not (isinstance(firstName, str) and firstName != ""):
             contacts.append("First Name is missing!")
+            isContactsCompleteValid = False
+        # check email
+        if not (isinstance(email, str) and validMail(email)):
+            contacts.append("Email missing or not valid!")
+            isContactsCompleteValid = False
+        # check affiliation
+        if not (isinstance(affiliation, str) and affiliation != ""):
+            contacts.append("Affiliation is missing!")
+            isContactsCompleteValid = False
+        # check orcid
+        if not (isinstance(orcid, str) and validORCID(orcid)):
+            contacts.append("ORCID is missing or not valid!")
+            isContactsCompleteValid = False
+
+        if isContactsCompleteValid:
+            contacts.append(isContactsCompleteValid)
 
         counter += 1
         # if there is no next entry, break the loop
@@ -257,7 +265,7 @@ async def validateContacts(request: Request, id: int, token: commonToken) -> lis
 
 
 # check whether the necessary folders and files are present
-def checkContent(arc: Arc, content: list) -> bool | str:
+def checkContent(arc: Arc, content: list[str]) -> bool | str:
     # if the name is found in the list, remove it
     for entry in arc.Arc:
         if entry.name in content:
@@ -304,3 +312,129 @@ def validORCID(orcid: str) -> bool:
         return not re.match(r"\d{4}-\d{4}-\d{4}-\d{4}", orcid) is None
     except:
         return False
+
+
+
+REQUIRED_TOP_LEVEL_CONTENT = [
+    ".arc",
+    "assays",
+    "runs",
+    "studies",
+    "workflows",
+    "isa.investigation.xlsx",
+]
+REQUIRED_ASSAY_CONTENT = ["dataset", "protocols", "isa.assay.xlsx"]
+
+
+class ArcValidator:
+    """Class for ARC validation."""
+
+    def __init__(
+        self, arc_project_id: int, cookie: str, path: str = "", ref: str = "main"
+    ) -> None:
+        self.full_tree: list[str] = fetch_full_repo_tree(
+            arc_project_id, cookie, path, ref
+        )
+        for it in self.full_tree:
+            print(it)
+        print("-" * 80)
+        self.assays: dict[str, list[str]] = self._get_contents("assays")
+        self.runs: dict[str, list[str]] = self._get_contents("runs")
+        self.studies: dict[str, list[str]] = self._get_contents("studies")
+        self.workflows: dict[str, list[str]] = self._get_contents("workflows")
+        print(self.assays)
+        print(self.runs)
+        print(self.studies)
+        print(self.workflows)
+
+        # contains_required_dirs = self.check_repo_structure(REQUIRED_TOP_LEVEL_CONTENT)
+        # print(contains_required_dirs)
+        validated_assays = self.check_assay_structures(REQUIRED_ASSAY_CONTENT)
+        print(f"{validated_assays=}")
+
+    def check_repo_structure(
+        self, required_top_level_content: list[str]
+    ) -> dict[str, bool]:
+        """Check if the ARC repository contains all required top-level directories
+        and files.
+
+        Args:
+            required_top_level_content: List of directory and file names
+                required in an ARC.
+
+        Returns:
+            Dictionary with the required directory names as keys and a corresponding
+            boolean as value, indicating if the entry is present or not.
+        """
+        top_level_entries = [x.split("/", maxsplit=1)[0] for x in self.full_tree]
+        return {x: x in top_level_entries for x in required_top_level_content}
+
+    def check_assay_structures(
+        self, required_assay_content: list[str]
+    ) -> dict[str, dict[str, bool]]:
+        """Check if each assay contains all required directories and files.
+
+        Args:
+            required_assay_content: List of directory and file names that
+                are required in an assay entry
+
+        Returns:
+            Dictionary with the assay names as keys (str) and inner dictionaries
+            as values. The inner dictionary holds the names of the required
+            content names as keys (str) and corresponding booleans as value,
+            indicating if an entry is present or not.
+        """
+        assay_validation: dict[str, dict[str, bool]] = dict()
+        for assay_name, assay_content in self.assays.items():
+            content_dirs = [x.split("/", maxsplit=1)[0] for x in assay_content]
+            assay_validation[assay_name] = {
+                x: x in content_dirs for x in required_assay_content
+            }
+
+        return assay_validation
+
+    def _get_contents(self, dirname: str) -> dict[str, list[str]]:
+        directory_lst = [
+            x.split("/", maxsplit=1)[1]
+            for x in self.full_tree
+            if x.split("/")[0] == dirname
+        ]
+        directory_dict: dict[str, list[str]] = dict()
+        for entry in directory_lst:
+            if "/" in entry:
+                entry_name, entry_content = entry.split("/", maxsplit=1)
+                directory_dict.setdefault(entry_name, []).append(entry_content)
+
+        return directory_dict
+
+
+def fetch_full_repo_tree(
+    project_id: int, cookie: str, path: str = "", ref: str = "main"
+) -> list[str]:
+    token = getData(cookie)
+    target = getTarget(token["target"])
+    domain = os.environ.get(target)
+    url = f"{domain}/api/v4/projects/{project_id}/repository/tree"
+    headers = {"Authorization": f"Bearer {token['gitlab']}"}
+
+    tree: list[str] = []
+    page = 1
+
+    while True:
+        params = {"ref": ref, "path": path, "per_page": 100, "page": page}
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        items = response.json()
+        if not items:
+            break
+
+        for item in items:
+            if item["type"] == "tree":
+                # Recurse into subdirectory
+                tree.extend(fetch_full_repo_tree(project_id, cookie, item["path"], ref))
+            elif item["type"] == "blob":
+                tree.append(item["path"])
+
+        page += 1
+
+    return tree
