@@ -87,9 +87,12 @@ async def getTemplates() -> Templates:
         except:
             templateJson = {}
 
-        # try the old way to list the templates
+        # get the templates from the old url
         try:
-            templateList = [json.loads(x) for x in templateJson]
+            try:
+                templateList = [json.loads(x) for x in templateJson]
+            except:
+                templateList = [x for x in json.loads(templateJson)]
 
             # include list of custom templates
             templatePath = os.environ.get("BACKEND_SAVE") + "templates"

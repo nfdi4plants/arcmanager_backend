@@ -21,6 +21,13 @@ Just go ahead and paste it inside of the "data" fields, if there are any.
 
 Without the frontend locally you'll have to use the live frontend.
 
-You basically repeat the steps made in Case 1 on the [live site](https://nfdi4plants.de/arcmanager/app/index.html).
+You make similar steps as in Case 1 on the [live site](https://nfdi4plants.de/arcmanager/app/index.html).
 
-After logging in, just take the cookie and paste it into the "data" fields in the docs of your local backend.
+Get the string from "data", open up the backend documentation again and create a new cookie in the cookie section.
+![add cookie](assets/cookieAdd.png)
+
+Name the cookie "data" and enter the copied string as value. This will simulate a login process as through the authentication.
+
+![cookie added](assets/cookieAdded.png)
+
+Now you can use the documentation to test the various endpoints (you can fill out the cookie field with either a random string or with the proper cookie, as the cookie data will always be read out from the browser cookie area).
