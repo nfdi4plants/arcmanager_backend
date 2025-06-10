@@ -409,13 +409,8 @@ class ArcValidator:
         """Check if the ARC repository contains all required top-level directories
         and files.
 
-        Args:
-            required_top_level_content: List of directory and file names
-                required in an ARC.
-
         Returns:
-            Dictionary with the required directory names as keys and a corresponding
-            boolean as value, indicating if the entry is present or not.
+            The result of the repository structure validation.
         """
         top_level_entries = [x.split("/", maxsplit=1)[0] for x in self.full_tree]
         messages: list[str] = []
@@ -428,6 +423,14 @@ class ArcValidator:
         return ValidationResult(is_valid=is_valid, messages=messages)
 
     def validate_assays(self) -> list[Assay]:
+        """Validation of assays.
+
+        Checks if each assay contains the required content and if the
+        isa.assay.xlsx file contains a second sheet.
+
+        Returns:
+            Validation results of assays.
+        """
         assays = self._get_dir_contents("assays")
         validation_assays: list[Assay] = []
 
@@ -450,6 +453,14 @@ class ArcValidator:
         return validation_assays
 
     def validate_studies(self) -> list[Study]:
+        """Validation of studies.
+
+        Checks if each study contains the required content and if the
+        isa.study.xlsx file contains a second sheet.
+
+        Returns:
+            Validation results of assays.
+        """
         studies = self._get_dir_contents("studies")
         validation_studies: list[Study] = []
 
@@ -474,6 +485,19 @@ class ArcValidator:
     def _check_sub_dir_structure(
         self, sub_dir_name: str, sub_dir_content: list[str], required_content: list[str]
     ) -> ValidationResult:
+        """Check an arbitrary sub directory structure, e.g., a certain assay in
+        `assays` folder.
+
+
+        Args:
+            sub_dir_name: Name of directory to check (e.g., name of an assay).
+            sub_dir_content: Paths of the content of `sub_dir_name`.
+            required_content: Names of files/directories required to be
+                contained in `sub_dir_name`.
+
+        Returns:
+            Result of directory structure validation.
+        """
         messages: list[str] = []
         valid_structure = True
         dir_entries = [x.split("/", maxsplit=1)[0] for x in sub_dir_content]
@@ -487,6 +511,17 @@ class ArcValidator:
     def _check_isa_file_second_sheet(
         self, sub_dir_name: str, sub_dir_content: list[str], isa_file_type: IsaFileType
     ) -> ValidationResult:
+        """Check if an isa.xxx.xlsx file contains a second excel sheet.
+
+        Args:
+            sub_dir_name: Name of the directory to check (e.g., name of an assay).
+            sub_dir_content: Paths of the content of `sub_dir_name`.
+            isa_file_type: Against which kind of isa file to check.
+
+        Returns:
+            Result of the validation containing information if a second sheet
+            exists or not.
+        """
         match isa_file_type:
             case IsaFileType.ASSAY:
                 sub_dir_path = f"assays/{sub_dir_name}/"
@@ -511,6 +546,11 @@ class ArcValidator:
         return ValidationResult(is_valid=has_second_sheet, messages=messages)
 
     def validate_isa_investigation_file(self) -> IsaInvestigation:
+        """Validation of a `isa.investigation.xlsx` file.
+
+        Returns:
+            Result of the validation as `IsaInvestigation`.
+        """
         isa_investigation_file = IsaFileType.INVESTIGATION.value
         if isa_investigation_file not in self.full_tree:
             raise ValueError(f"`{isa_investigation_file}` missing in ARC")
@@ -525,12 +565,15 @@ class ArcValidator:
             correct_sheet_name = ValidationResult(is_valid=True, messages=[])
         except KeyError:
             correct_sheet_name = ValidationResult(
-                is_valid=False, messages=[f"Sheet of 'isa.investigation.xlsx not named {sheet_name}"]
+                is_valid=False,
+                messages=[f"Sheet of 'isa.investigation.xlsx not named {sheet_name}"],
             )
             sheet = pd.read_excel(excel_bytes, index_col=0, sheet_name=0)
 
         messages: list[str] = list()
-        required_fields_results = self._check_isa_investigation_required(sheet, messages)
+        required_fields_results = self._check_isa_investigation_required(
+            sheet, messages
+        )
         additional_fields_results = self._check_isa_investigation_addtional(
             sheet, messages
         )
@@ -547,6 +590,19 @@ class ArcValidator:
     def _check_isa_investigation_required(
         self, sheet: pd.DataFrame, messages: list[str]
     ) -> dict[str, bool]:
+        """Check of required fields in an `isa.investigation.xlsx` file.
+
+        Args:
+            sheet: Spreadsheet name inside the excel file.
+            messages: List of messages about validation status of fields.
+                (Gets mutated inside function)
+
+        Returns:
+            Dictionary in the form {"<column name>": <validation status>},
+            e.g., `{"title": True}`. Mutates messages: Info message(s)
+            about negative validation get appended.
+
+        """
         results: dict[str, bool] = dict()
         for key, value in self.REQUIRED_INVESTIGATION_COLUMNS.items():
             try:
@@ -570,6 +626,18 @@ class ArcValidator:
     def _check_isa_investigation_addtional(
         self, sheet: pd.DataFrame, messages: list[str]
     ) -> dict[str, bool]:
+        """Check of additional fields in an `isa.investigation.xlsx` file.
+
+        Args:
+            sheet: Spreadsheet name inside the excel file.
+            messages: List of messages about validation status of fields.
+                (Gets mutated inside function)
+
+        Returns:
+            Dictionary in the form {"<column name>": <validation status>},
+            e.g., `{"release_date": True}`. Mutates messages: Info message(s)
+            about negative validation get appended.
+        """
         results: dict[str, bool] = dict()
         for key, value in self.ADDITIONAL_INVESTIGATION_COLUMNS.items():
             try:
@@ -599,6 +667,18 @@ class ArcValidator:
     def _check_isa_investigation_contacts(
         self, sheet: pd.DataFrame, messages: list[str]
     ) -> list[dict[str, bool]]:
+        """Check of additional fields in an `isa.investigation.xlsx` file.
+
+        Args:
+            sheet: Spreadsheet name inside the excel file.
+            messages: List of messages about validation status of fields.
+                (Gets mutated inside function)
+
+        Returns:
+            Dictionary in the form {"<column name>": <validation status>},
+            e.g., `{"last_name": True}`. Mutates messages: Info message(s)
+            about negative validation get appended.
+        """
         validation_contacts: list[dict[str, bool]] = []
         for key, field_name in self.INVESTIGATION_CONTACT_FIELDS.items():
             try:
@@ -625,6 +705,16 @@ class ArcValidator:
         return validation_contacts
 
     def _check_contact_fields(self, field_key: str, contact_column: Any) -> bool:
+        """Check of contact fields (which is represented as a column).
+
+        Args:
+            field_key: Key of `INVESTIGATION_CONTACT_FIELDS` to check against.
+            contact_column: Column of an xlsx-file which represents the fields
+                of a contact.
+
+        Returns:
+            `True` is the contact field is valid, `False` otherwise.
+        """
         match field_key:
             case "last_name" | "first_name" | "affiliation":
                 is_valid = isinstance(contact_column, str) and contact_column != ""
@@ -642,6 +732,15 @@ class ArcValidator:
     def validate_invenio_publishable(
         self, isa_investigation_file: IsaInvestigation
     ) -> ValidationResult:
+        """Validation of an ARC if it can be published to Invenio.
+
+        Args:
+            isa_investigation_file: Validation result of an
+                `isa.investigation.xlsx` file.
+
+        Returns:
+            Result if ARC is publishable to Invenio.
+        """
         is_valid = True
         messages: list[str] = []
         try:
@@ -664,8 +763,16 @@ class ArcValidator:
 
         return ValidationResult(is_valid=is_valid, messages=messages)
 
-
     def _get_dir_contents(self, dirname: str) -> dict[str, list[str]]:
+        """Receive paths contained in a directory of an ARC.
+
+        Args:
+            dirname: Name of the directory to search inside.
+
+        Returns:
+            A dictionary that maps the directory name (str) to the paths
+            contained (list[str]) inside of it.
+        """
         directory_lst = [
             x.split("/", maxsplit=1)[1]
             for x in self.full_tree
@@ -687,7 +794,7 @@ class ArcValidator:
         Args:
             project_id: ID of the ARC.
             cookie: Authorization cookie.
-            path: Path to start fetching. Default: "" for starting at top-level
+            path: Path to start fetching. Default: "" for starting at the root.
             ref: Branch for fetching. Default: 'main' branch
 
         Returns:
@@ -719,6 +826,7 @@ class ArcValidator:
                         )
                     )
                 elif item["type"] == "blob":
+                    # End of a tree branch
                     tree.append(item["path"])
 
             page += 1
@@ -728,6 +836,17 @@ class ArcValidator:
     def _fetch_raw_file(
         self, project_id: int, cookie: str, filepath: str, ref: str = "main"
     ) -> BytesIO:
+        """Fetch the bytes of a file contained in a Gitlab repository.
+
+        Args:
+            project_id: ID of the ARC.
+            cookie: Authorization cookie.
+            filepath: Path to of the file to be fetched.
+            ref: Branch for fetching. Default: 'main' branch
+
+        Returns:
+            Bytes of the fetched file.
+        """
         token = getData(cookie)
         target = getTarget(token["target"])
         domain = os.environ.get(target)
