@@ -330,22 +330,22 @@ class ArcValidationResponse(BaseModel):
     isa_investigation: IsaInvestigation
     assays: list[Assay]
     studies: list[Study]
-    has_readme: ValidationResult
-    has_license: ValidationResult
     invenio_publishable: ValidationResult
+    # has_readme: ValidationResult
+    # has_license: ValidationResult
 
 
 class ValidationResult(BaseModel):
     is_valid: bool
-    message: str
+    messages: list[str]
 
 
 class IsaInvestigation(BaseModel):
     correct_sheet_name: ValidationResult
     required_fields: dict[str, bool]
     addtional_fields: dict[str, bool]
-    contacts: dict[str, list[bool]]
-    message: str
+    contacts: list[dict[str, bool]]
+    messages: list[str]
 
 
 class Assay(BaseModel):
@@ -405,7 +405,7 @@ class ArcValidator:
             arc_project_id, cookie, "", "main"
         )
 
-    def check_repo_structure(self) -> ValidationResult:
+    def validate_repo_structure(self) -> ValidationResult:
         """Check if the ARC repository contains all required top-level directories
         and files.
 
@@ -418,16 +418,16 @@ class ArcValidator:
             boolean as value, indicating if the entry is present or not.
         """
         top_level_entries = [x.split("/", maxsplit=1)[0] for x in self.full_tree]
-        message: list[str] = []
+        messages: list[str] = []
         is_valid = True
         for entry in self.REQUIRED_TOP_LEVEL_CONTENT:
             if entry not in top_level_entries:
                 is_valid = False
-                message += f"{entry} is missing in the ARC"
+                messages += f"{entry} is missing in the ARC"
 
-        return ValidationResult(is_valid=is_valid, message="\n".join(message))
+        return ValidationResult(is_valid=is_valid, messages=messages)
 
-    def check_assays(self) -> list[Assay]:
+    def validate_assays(self) -> list[Assay]:
         assays = self._get_dir_contents("assays")
         validation_assays: list[Assay] = []
 
@@ -449,7 +449,7 @@ class ArcValidator:
 
         return validation_assays
 
-    def check_studies(self) -> list[Study]:
+    def validate_studies(self) -> list[Study]:
         studies = self._get_dir_contents("studies")
         validation_studies: list[Study] = []
 
@@ -474,19 +474,19 @@ class ArcValidator:
     def _check_sub_dir_structure(
         self, sub_dir_name: str, sub_dir_content: list[str], required_content: list[str]
     ) -> ValidationResult:
-        message: list[str] = []
+        messages: list[str] = []
         valid_structure = True
         dir_entries = [x.split("/", maxsplit=1)[0] for x in sub_dir_content]
         for required_entry in required_content:
             if required_entry not in dir_entries:
-                message += f"{required_entry} is missing in {sub_dir_name}"
+                messages += f"{required_entry} is missing in {sub_dir_name}"
                 valid_structure = False
 
-        return ValidationResult(is_valid=valid_structure, message="\n".join(message))
+        return ValidationResult(is_valid=valid_structure, messages=messages)
 
     def _check_isa_file_second_sheet(
         self, sub_dir_name: str, sub_dir_content: list[str], isa_file_type: IsaFileType
-    ):
+    ) -> ValidationResult:
         match isa_file_type:
             case IsaFileType.ASSAY:
                 sub_dir_path = f"assays/{sub_dir_name}/"
@@ -495,7 +495,7 @@ class ArcValidator:
             case IsaFileType.INVESTIGATION:
                 sub_dir_path = ""
 
-        message = ""
+        messages: list[str] = []
         has_second_sheet = False
         for entry in sub_dir_content:
             if entry.endswith(isa_file_type.value):
@@ -506,11 +506,11 @@ class ArcValidator:
                 sheets = pd.read_excel(isa_file_bytes, index_col=0, sheet_name=None)
                 has_second_sheet = len(sheets) > 1
                 if not has_second_sheet:
-                    message = f"No second sheet in '{full_name}'"
+                    messages.append(f"No second sheet in '{full_name}'")
 
-        return ValidationResult(is_valid=has_second_sheet, message=message)
+        return ValidationResult(is_valid=has_second_sheet, messages=messages)
 
-    def check_isa_investigation_file(self) -> IsaInvestigation:
+    def validate_isa_investigation_file(self) -> IsaInvestigation:
         isa_investigation_file = IsaFileType.INVESTIGATION.value
         if isa_investigation_file not in self.full_tree:
             raise ValueError(f"`{isa_investigation_file}` missing in ARC")
@@ -522,42 +522,42 @@ class ArcValidator:
         try:
             sheets = pd.read_excel(excel_bytes, index_col=0, sheet_name=None)
             sheet = sheets[sheet_name]
-            correct_sheet_name = ValidationResult(is_valid=True, message="")
+            correct_sheet_name = ValidationResult(is_valid=True, messages=[])
         except KeyError:
             correct_sheet_name = ValidationResult(
-                is_valid=False, message=f"Sheet of 'isa.investigation.xlsx not named {sheet_name}"
+                is_valid=False, messages=[f"Sheet of 'isa.investigation.xlsx not named {sheet_name}"]
             )
             sheet = pd.read_excel(excel_bytes, index_col=0, sheet_name=0)
 
-        message: list[str] = list()
-        required_fields_results = self._check_isa_investigation_required(sheet, message)
+        messages: list[str] = list()
+        required_fields_results = self._check_isa_investigation_required(sheet, messages)
         additional_fields_results = self._check_isa_investigation_addtional(
-            sheet, message
+            sheet, messages
         )
-        contact_fields_result = self._check_isa_investigation_contacts(sheet, message)
+        contact_fields_result = self._check_isa_investigation_contacts(sheet, messages)
 
         return IsaInvestigation(
             correct_sheet_name=correct_sheet_name,
             required_fields=required_fields_results,
             addtional_fields=additional_fields_results,
             contacts=contact_fields_result,
-            message="\n".join(message),
+            messages=messages,
         )
 
     def _check_isa_investigation_required(
-        self, sheet: pd.DataFrame, message: list[str]
-    ):
+        self, sheet: pd.DataFrame, messages: list[str]
+    ) -> dict[str, bool]:
         results: dict[str, bool] = dict()
         for key, value in self.REQUIRED_INVESTIGATION_COLUMNS.items():
             try:
                 to_validate = [x for x in sheet.loc[value]][0]
             except KeyError:
-                message.append(f"Row '{value}' not found in 'isa.investigation.xlsx'")
+                messages.append(f"Row '{value}' not found in 'isa.investigation.xlsx'")
                 continue
 
             if not isinstance(to_validate, str) or to_validate == "":
                 is_valid = False
-                message.append(
+                messages.append(
                     f"No entry found for '{value}' in 'isa.investigation.xlsx'"
                 )
             else:
@@ -568,25 +568,25 @@ class ArcValidator:
         return results
 
     def _check_isa_investigation_addtional(
-        self, sheet: pd.DataFrame, message: list[str]
-    ):
+        self, sheet: pd.DataFrame, messages: list[str]
+    ) -> dict[str, bool]:
         results: dict[str, bool] = dict()
         for key, value in self.ADDITIONAL_INVESTIGATION_COLUMNS.items():
             try:
                 to_validate = sheet.loc[value]
             except KeyError:
-                message.append(f"Row '{value}' not found in 'isa.investigation.xlsx'.")
+                messages.append(f"Row '{value}' not found in 'isa.investigation.xlsx'.")
                 continue
 
             # TODO: valiDate should only return boolean
             if "date" in key and not valiDate(to_validate):
                 is_valid = False
-                message.append(
+                messages.append(
                     f"Entry '{to_validate}' for '{value}' is not a valid date."
                 )
             elif not isinstance(to_validate, str) or to_validate == "":
                 is_valid = False
-                message.append(
+                messages.append(
                     f"No entry found for '{value}' in 'isa.investigation.xlsx'."
                 )
             else:
@@ -597,37 +597,73 @@ class ArcValidator:
         return results
 
     def _check_isa_investigation_contacts(
-        self, sheet: pd.DataFrame, message: list[str]
-    ):
-        result: dict[str, list[bool]] = dict()
-        for key, value in self.INVESTIGATION_CONTACT_FIELDS.items():
+        self, sheet: pd.DataFrame, messages: list[str]
+    ) -> list[dict[str, bool]]:
+        validation_contacts: list[dict[str, bool]] = []
+        for key, field_name in self.INVESTIGATION_CONTACT_FIELDS.items():
             try:
-                to_validate = sheet.loc[value]
+                column_to_validate = sheet.loc[field_name]
             except KeyError:
-                message.append(f"Row '{value}' not found in '{isa_investigation_file}'")
+                messages.append(
+                    f"Row '{field_name}' not found in 'isa.investigation.xlsx'"
+                )
                 continue
 
-            to_validate: list[Any] = [x for x in sheet.loc[value]]
+            contact: dict[str, bool] = dict()
+            contacts_columns: list[Any] = [x for x in sheet.loc[field_name]]
+            for i, column_to_validate in enumerate(contacts_columns):
+                is_valid = self._check_contact_fields(key, column_to_validate)
+                contact[key] = is_valid
 
-            match key:
-                case "last_name" | "first_name" | "affiliation":
-                    are_valid = [isinstance(x, str) and x != "" for x in to_validate]
-                case "email":
-                    are_valid = [validMail(x) for x in to_validate]
-                case "orcid":
-                    are_valid = [validORCID(x) for x in to_validate]
-                case _:
-                    raise NotImplementedError(f"No validation implemented for `{key}`.")
-
-            for i, is_valid in enumerate(are_valid):
                 if not is_valid:
-                    message.append(
-                        f"Contact {i + 1}: No valid value for '{value}' found in 'isa.investigation.xlsx'"
+                    messages.append(
+                        f"Contact {i + 1}: No valid value for '{field_name}' found in 'isa.investigation.xlsx'"
                     )
 
-            result[key] = are_valid
+            validation_contacts.append(contact)
 
-        return result
+        return validation_contacts
+
+    def _check_contact_fields(self, field_key: str, contact_column: Any) -> bool:
+        match field_key:
+            case "last_name" | "first_name" | "affiliation":
+                is_valid = isinstance(contact_column, str) and contact_column != ""
+            case "email":
+                is_valid = validMail(contact_column)
+            case "orcid":
+                is_valid = validORCID(contact_column)
+            case _:
+                raise NotImplementedError(
+                    f"No validation implemented for `{field_key}`."
+                )
+
+        return is_valid
+
+    def validate_invenio_publishable(
+        self, isa_investigation_file: IsaInvestigation
+    ) -> ValidationResult:
+        is_valid = True
+        messages: list[str] = []
+        try:
+            _ = isa_investigation_file.required_fields["title"]
+        except KeyError:
+            is_valid = False
+            messages.append("Title is missing for publishing to invenio.")
+
+        try:
+            _ = isa_investigation_file.contacts[0]["last_name"]
+        except (KeyError, IndexError):
+            is_valid = False
+            messages.append("Last name is missing for publishing to invenio.")
+
+        try:
+            _ = isa_investigation_file.contacts[0]["first_name"]
+        except (KeyError, IndexError):
+            is_valid = False
+            messages.append("First name is missing for publishing to invenio.")
+
+        return ValidationResult(is_valid=is_valid, messages=messages)
+
 
     def _get_dir_contents(self, dirname: str) -> dict[str, list[str]]:
         directory_lst = [
