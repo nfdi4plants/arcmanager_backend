@@ -322,7 +322,8 @@ def validORCID(orcid: str) -> bool:
 
 from enum import Enum
 from pprint import pprint
-from typing import Any
+from typing import Any, override
+from abc import ABC, abstractmethod
 
 
 class ArcValidationResponse(BaseModel):
@@ -368,6 +369,20 @@ class IsaFileType(Enum):
     STUDY = "isa.study.xlsx"
 
 
+class ClientInterface(ABC):
+    @abstractmethod
+    def fetch_full_repo_tree(
+        self, project_id: int, path: str = "", ref: str = "main"
+    ) -> list[str]:
+        pass
+
+    @abstractmethod
+    def fetch_raw_file(
+        self, project_id: int, filepath: str, ref: str = "main"
+    ) -> BytesIO:
+        pass
+
+
 class ArcValidator:
     """Class for ARC validation."""
 
@@ -398,11 +413,11 @@ class ArcValidator:
         "orcid": "Comment[ORCID]",
     }
 
-    def __init__(self, arc_project_id: int, cookie: str) -> None:
+    def __init__(self, arc_project_id: int, client: ClientInterface) -> None:
         self.project_id: int = arc_project_id
-        self.cookie: str = cookie
-        self.full_tree: list[str] = self._fetch_full_repo_tree(
-            arc_project_id, cookie, "", "main"
+        self.client: ClientInterface = client
+        self.full_tree: list[str] = self.client.fetch_full_repo_tree(
+            arc_project_id, "", "main"
         )
 
     def validate_repo_structure(self) -> ValidationResult:
@@ -418,7 +433,7 @@ class ArcValidator:
         for entry in self.REQUIRED_TOP_LEVEL_CONTENT:
             if entry not in top_level_entries:
                 is_valid = False
-                messages += f"{entry} is missing in the ARC"
+                messages.append(f"{entry} is missing in the ARC")
 
         return ValidationResult(is_valid=is_valid, messages=messages)
 
@@ -488,7 +503,6 @@ class ArcValidator:
         """Check an arbitrary sub directory structure, e.g., a certain assay in
         `assays` folder.
 
-
         Args:
             sub_dir_name: Name of directory to check (e.g., name of an assay).
             sub_dir_content: Paths of the content of `sub_dir_name`.
@@ -535,9 +549,7 @@ class ArcValidator:
         for entry in sub_dir_content:
             if entry.endswith(isa_file_type.value):
                 full_name = f"{sub_dir_path}{entry}"
-                isa_file_bytes = self._fetch_raw_file(
-                    self.project_id, self.cookie, full_name
-                )
+                isa_file_bytes = self.client.fetch_raw_file(self.project_id, full_name)
                 sheets = pd.read_excel(isa_file_bytes, index_col=0, sheet_name=None)
                 has_second_sheet = len(sheets) > 1
                 if not has_second_sheet:
@@ -555,8 +567,8 @@ class ArcValidator:
         if isa_investigation_file not in self.full_tree:
             raise ValueError(f"`{isa_investigation_file}` missing in ARC")
 
-        excel_bytes = self._fetch_raw_file(
-            self.project_id, self.cookie, isa_investigation_file
+        excel_bytes = self.client.fetch_raw_file(
+            self.project_id, isa_investigation_file
         )
         sheet_name = "isa_investigation"
         try:
@@ -786,8 +798,18 @@ class ArcValidator:
 
         return directory_dict
 
-    def _fetch_full_repo_tree(
-        self, project_id: int, cookie: str, path: str = "", ref: str = "main"
+
+class GitlabClient(ClientInterface):
+    def __init__(self, cookie: str) -> None:
+        self.cookie = cookie
+        self.token = getData(self.cookie)
+        self.target = getTarget(self.token["target"])
+        self.domain = os.environ.get(self.target)
+        self.headers = {"Authorization": f"Bearer {self.token['gitlab']}"}
+
+    @override
+    def fetch_full_repo_tree(
+        self, project_id: int, path: str = "", ref: str = "main"
     ) -> list[str]:
         """Fetch the entire tree of the Gitlab repository.
 
@@ -799,19 +821,18 @@ class ArcValidator:
 
         Returns:
             List of all full paths (str) files and directories in the Gitlab repo.
+
+        Raises:
+            requests.HTTPError: If request to Gitlab API fails.
         """
-        token = getData(cookie)
-        target = getTarget(token["target"])
-        domain = os.environ.get(target)
-        headers = {"Authorization": f"Bearer {token['gitlab']}"}
-        url = f"{domain}/api/v4/projects/{project_id}/repository/tree"
+        url = f"{self.domain}/api/v4/projects/{project_id}/repository/tree"
 
         tree: list[str] = []
         page = 1
 
         while True:
             params = {"ref": ref, "path": path, "per_page": 100, "page": page}
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=self.headers, params=params)
             response.raise_for_status()
             items = response.json()
             if not items:
@@ -821,9 +842,7 @@ class ArcValidator:
                 if item["type"] == "tree":
                     # Recurse into subdirectory
                     tree.extend(
-                        self._fetch_full_repo_tree(
-                            project_id, cookie, item["path"], ref
-                        )
+                        self.fetch_full_repo_tree(project_id, item["path"], ref)
                     )
                 elif item["type"] == "blob":
                     # End of a tree branch
@@ -833,8 +852,9 @@ class ArcValidator:
 
         return tree
 
-    def _fetch_raw_file(
-        self, project_id: int, cookie: str, filepath: str, ref: str = "main"
+    @override
+    def fetch_raw_file(
+        self, project_id: int, filepath: str, ref: str = "main"
     ) -> BytesIO:
         """Fetch the bytes of a file contained in a Gitlab repository.
 
@@ -846,13 +866,14 @@ class ArcValidator:
 
         Returns:
             Bytes of the fetched file.
-        """
-        token = getData(cookie)
-        target = getTarget(token["target"])
-        domain = os.environ.get(target)
-        headers = {"Authorization": f"Bearer {token['gitlab']}"}
-        encoded_path = urllib.parse.quote_plus(filepath)
-        url = f"{domain}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw?ref={ref}"
 
-        response = requests.get(url, headers=headers)
+        Raises:
+            requests.HTTPError: If request to Gitlab API fails.
+        """
+        encoded_path = urllib.parse.quote_plus(filepath)
+        url = f"{self.domain}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
+        params = {"ref": ref}
+        response = requests.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+
         return BytesIO(response.content)
