@@ -877,3 +877,28 @@ class GitlabClient(ClientInterface):
         response.raise_for_status()
 
         return BytesIO(response.content)
+
+
+    # TODO: check if there's a better way to do that
+    def is_file_tracked_by_lfs(self, project_id: int, filepath: str, ref: str = "main") -> bool:
+        """Check if a file is tracked via Git LFS by looking for a
+        Git LFS pointer file.
+
+        Args:
+            filepath: Path to the file in the repo.
+            ref: Branch or tag name (default: "main").
+
+        Returns:
+            True if the file is an LFS pointer, False otherwise.
+
+        Raises:
+            requests.HTTPError: If request to Gitlab API fails.
+        """
+        encoded_path = urllib.parse.quote_plus(filepath)
+        url = f"{self.domain}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
+        params = {"ref": ref}
+        response = requests.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+
+        content = response.content
+        return content.startswith(b"version https://git-lfs.github.com/spec/v1")
