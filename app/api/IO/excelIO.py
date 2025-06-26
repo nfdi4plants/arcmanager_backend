@@ -56,6 +56,18 @@ def readIsaFile(path: str, type: str):
         case "datamap":
             return getSwateSheets(path, "datamap")
 
+        case "run":
+            # name by arc specification
+            sheetName = "isa_run"
+
+            sheetName2 = "Run"
+
+        case "workflow":
+            # name by arc specification
+            sheetName = "isa_workflow"
+
+            sheetName2 = "Workflow"
+
         case other:
             sheetName = sheetName2 = ""
 
@@ -102,6 +114,17 @@ def writeIsaFile(path: str, type: str, newContent, repoId: int, location: str):
             sheetName = "isa_datamap"
 
             sheetName2 = "Datamap"
+
+        case "run":
+            # name by arc specification
+            sheetName = "isa_run"
+
+            sheetName2 = "Run"
+
+        case "workflow":
+            # name by arc specification
+            sheetName = "isa_workflow"
+            sheetName2 = "Workflow"
 
         case other:
             sheetName = sheetName2 = ""
@@ -272,6 +295,21 @@ def getSwateSheets(path: str, type: str):
             ]
 
             names = [x for x in sheetNames]
+
+        case "run":
+            sheetNames = excelFile.sheet_names
+
+            sheets = [
+                loads(
+                    pd.read_excel(path, sheet_name=x, engine="openpyxl").to_json(
+                        orient="split"
+                    )
+                )
+                for x in sheetNames
+                if x != "Run" and x != "isa_run"
+            ]
+
+            names = [x for x in sheetNames if x != "Run" and x != "isa_run"]
 
     return sheets, names
 

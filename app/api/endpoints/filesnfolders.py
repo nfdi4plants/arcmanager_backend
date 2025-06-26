@@ -548,9 +548,14 @@ async def uploadFile(
                             try:
                                 # get the download url and header for the file
                                 checkResult = downloadCheck.json()
-                                header_download = checkResult["objects"][0]["actions"][
-                                    "download"
-                                ]["header"]
+                                try:
+                                    header_download = checkResult["objects"][0][
+                                        "actions"
+                                    ]["download"]["header"]
+                                except:
+                                    header_download = {
+                                        "Authorization": f"Bearer {token['gitlab']}"
+                                    }
                                 urlDownload = checkResult["objects"][0]["actions"][
                                     "download"
                                 ]["href"]
