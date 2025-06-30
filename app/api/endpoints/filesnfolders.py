@@ -15,6 +15,7 @@ from fastapi import (
     Request,
     Response,
     status,
+    BackgroundTasks,
 )
 import requests
 from requests.adapters import HTTPAdapter
@@ -183,6 +184,445 @@ def fileChecker(id: int, name: str, totalChunks: int):
             )
 
 
+def lfsUploader(
+    token: commonToken,
+    name: str,
+    id: int,
+    path: str,
+    startTime: float,
+    branch: str = "main",
+    namespace: str = "",
+    totalChunks: int = 1,
+):
+    target = getTarget(token["target"])
+    header = {
+        "Authorization": "Bearer " + token["gitlab"],
+        "Content-Type": "application/json",
+    }
+    tempFile = tempfile.TemporaryFile(
+        prefix="temp_",
+        dir=os.environ.get("BACKEND_SAVE") + "cache",
+    )
+
+    # open up a new hash
+    shasum = hashlib.new("sha256")
+
+    for chunk in range(totalChunks):
+        f = open(
+            f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
+            "rb",
+        )
+        chunkData = f.read()
+        shasum.update(chunkData)
+        tempFile.write(chunkData)
+
+        f.close()
+
+        # clear the chunk
+        try:
+            os.remove(f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}")
+        except:
+            logging.warning(f"Failed to remove chunk {chunk} for file {name}")
+
+    # go to the start of the tempfile
+    tempFile.seek(0)
+
+    ##########################
+    ## START UPLOAD PROCESS ##
+    ##########################
+
+    logging.debug("Uploading file with lfs...")
+
+    # jump to file end and read the size
+    tempFile.seek(0, 2)
+
+    size = tempFile.tell()
+
+    # get the hash string
+    sha256 = shasum.hexdigest()
+
+    # build together the lfs upload json and header
+    lfsJson = {
+        "operation": "upload",
+        "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
+        "transfers": ["lfs-standalone-file", "basic"],
+        "ref": {"name": f"refs/heads/{branch}"},
+        "hash_algo": "sha256",
+    }
+
+    lfsHeaders = {
+        "Accept": "application/vnd.git-lfs+json",
+        "Content-type": "application/vnd.git-lfs+json",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token['gitlab']}",
+        "Content-Type": "application/json",
+    }
+
+    # construct the download url for the file
+    downloadUrl = f"https://oauth2:{token['gitlab']}@{os.environ.get(target).split('//')[1]}/{namespace}.git/info/lfs/objects/batch"
+
+    x = -1
+
+    # loop the upload process in case there is an 400 error returned after uploading the pointer file
+    # (indicating that the file wasn't properly uploaded to lfs storage in the first place)
+    while x < 3:
+        x += 1
+        # sleep for 10 secs increasing for each retry
+        time.sleep(x * 10)
+        if x > 0:
+            logging.debug("Retry " + str(x) + " for file: " + name)
+
+        ### Start upload process ###
+
+        # asking gitlab for the lfs address for the file
+        try:
+            r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("uploadFile", 504, startTime, e)
+
+        if r.status_code == 401:
+            logging.warning(f"Client cookie not authorized!")
+            writeLogJson(
+                "uploadFile",
+                401,
+                startTime,
+                f"Client not authorized to create new ISA!",
+            )
+        logging.debug("Uploading file to lfs...")
+        try:
+            result = r.json()
+        except:
+            writeLogJson(
+                "uploadFile",
+                500,
+                startTime,
+                f"Error while uploading the file to lfs storage!",
+            )
+
+        try:
+            logging.debug(name + ": " + str(sha256))
+        except:
+            logging.debug("Result for " + name + ": " + str(r.content))
+
+        # test if there is a change in the file
+        testFail = False
+        try:
+            test = result["objects"][0]["actions"]
+
+        # if the file is the same, there will be no "actions" attribute and therefore no upload is needed
+        except:
+            testFail = True
+
+        # if the file is new or includes new content, upload it
+        if not testFail:
+            # get header data
+            header_upload = result["objects"][0]["actions"]["upload"]["header"]
+
+            # get the upload link
+            urlUpload = result["objects"][0]["actions"]["upload"]["href"]
+            header_upload.pop("Transfer-Encoding")
+
+            # start at the beginning of the file
+            tempFile.seek(0, 0)
+
+            # upload the full file to lfs
+            try:
+                res = session.put(
+                    urlUpload,
+                    headers=header_upload,
+                    data=tempFile,
+                    stream=True,
+                )
+            except Exception as e:
+                logging.error(e)
+                writeLogJson("uploadFile", 504, startTime, e)
+
+            if not res.ok:
+                try:
+                    responseJson = res.json()
+                    responseJson["error"] != None
+                except:
+                    responseJson = {
+                        "error": "Couldn't upload file",
+                        "error_description": "Couldn't upload file to the lfs storage!",
+                    }
+                    logging.error(f"Couldn't upload to ARC! ERROR: {res.content}")
+                    writeLogJson(
+                        "uploadFile",
+                        400,
+                        startTime,
+                        f"Couldn't upload to ARC! ERROR: {res.content}",
+                    )
+
+        logging.debug("Uploading pointer file to repo...")
+
+        # build and upload the new pointer file to the arc
+        repoPath = quote(path, safe="")
+
+        postUrl = (
+            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}"
+        )
+
+        pointerContent = (
+            f"version https://git-lfs.github.com/spec/v1\n"
+            f"oid sha256:{sha256}\nsize {size}\n"
+        )
+
+        jsonData = {
+            "branch": branch,
+            "content": pointerContent,
+            "commit_message": "Create a new lfs pointer file",
+        }
+
+        try:
+            # check if file already exists
+            fileHead = session.head(
+                f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
+                headers=header,
+            )
+
+            # if file exists, a put request is needed as the file is being updated
+            if fileHead.ok:
+                response = session.put(postUrl, headers=headers, json=jsonData)
+
+            # if the head request fails, the files does not exist yet and needs to be send via http POST
+            else:
+                response = session.post(postUrl, headers=headers, json=jsonData)
+
+        except Exception as e:
+            logging.error(e)
+            if fileHead.ok:
+                response = requests.put(postUrl, headers=headers, json=jsonData)
+            else:
+                response = requests.post(postUrl, headers=headers, json=jsonData)
+
+        ## if the pointer upload fails, return an error or start again (in case of an 400 error, indicating gitlab being overwhelmed currently)
+        if not response.ok and response.status_code != 400:
+            try:
+                responseJson = response.json()
+                responseJson["error"] != None
+            except:
+                responseJson = {
+                    "error": "Couldn't upload file",
+                    "error_description": "Couldn't upload pointer file to the ARC!",
+                }
+            logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+            writeLogJson(
+                "uploadFile",
+                response.status_code,
+                startTime,
+                f"Couldn't upload to ARC! ERROR: {response.content}",
+            )
+
+        else:
+            # return exception if upload failed after 3 tries
+            if x >= 2 and response.status_code == 400:
+                logging.error(
+                    f"File {path} failed to upload after three tries! ERROR: {response.content}"
+                )
+                writeLogJson(
+                    "uploadFile",
+                    500,
+                    startTime,
+                    f"Couldn't upload to ARC after three tries! ERROR: {response.content}",
+                )
+
+            # check if response actually was successful, else the loop will start back at the beginning
+            if response.ok:
+                # check availability to make sure, the file also was properly uploaded in the lfs
+                logging.debug("Checking availability for " + name)
+                lfsJsonDown = {
+                    "operation": "download",
+                    "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
+                    "transfers": ["lfs-standalone-file", "basic"],
+                    "ref": {"name": f"refs/heads/{branch}"},
+                    "hash_algo": "sha256",
+                }
+
+                # request the download url for the file from lfs
+                try:
+                    downloadCheck = session.post(downloadUrl, json=lfsJsonDown)
+                except Exception as e:
+                    logging.error(e)
+                    writeLogJson("uploadFile", 504, startTime, e)
+
+                if downloadCheck.ok:
+                    try:
+                        # get the download url and header for the file
+                        checkResult = downloadCheck.json()
+                        try:
+                            header_download = checkResult["objects"][0]["actions"][
+                                "download"
+                            ]["header"]
+                        except:
+                            header_download = {
+                                "Authorization": f"Bearer {token['gitlab']}"
+                            }
+                        urlDownload = checkResult["objects"][0]["actions"]["download"][
+                            "href"
+                        ]
+
+                        try:
+                            # make a simple head request just to see whether the file is existing (we dont need to download it)
+                            lfsCheck = session.head(
+                                urlDownload,
+                                headers=header_download,
+                            )
+                        except Exception as e:
+                            logging.error(e)
+                            writeLogJson("uploadFile", 504, startTime, e)
+
+                        # if file is available, break loop
+                        if lfsCheck.ok:
+                            logging.debug(f"Upload of file {name} successful")
+                            x = 3
+
+                        # if file is missing it indicates a failed upload attempt -> go back to the start of the loop
+                        else:
+                            logging.warning(
+                                f"File {name} not found in LFS storage, retrying upload process..."
+                            )
+                    except Exception as e:
+                        logging.error(e)
+
+    ### end of loop ###
+
+    # logging
+    logging.info(
+        f"Uploaded File {name} to repo {id} on path: {path} with LFS. Size: {fileSizeReadable(size)}"
+    )
+
+    ### loop gitattributes ###
+
+    for y in range(5):
+        ## add filename to the gitattributes
+        url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
+
+        newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
+
+        # get the .gitattributes (for every retry sleep 2 sec in between)
+        try:
+            if y > 0:
+                logging.debug("Retrying retrieving .gitattributes...")
+            time.sleep(y * 2)
+            getResponse = session.get(url, headers=headers)
+        except Exception as e:
+            logging.error(e)
+            writeLogJson("uploadFile", 504, startTime, e)
+
+        postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
+
+        # if .gitattributes doesn't exist, create a new one
+        if not getResponse.ok:
+            content = newLine
+
+            attributeData = {
+                "branch": branch,
+                "content": content,
+                "commit_message": "Create .gitattributes",
+            }
+
+            try:
+                response = requests.post(
+                    postUrl, headers=headers, data=json.dumps(attributeData)
+                )
+            except Exception as e:
+                logging.error(e)
+                writeLogJson("uploadFile", 504, startTime, e)
+
+            if not response.ok:
+                try:
+                    responseJson = response.json()
+                    responseJson["error"] != None
+                except:
+                    responseJson = {
+                        "error": "Couldn't create .gitattributes",
+                        "error_description": "Couldn't create .gitattributes file in ARC!",
+                    }
+                logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
+                writeLogJson(
+                    "uploadFile",
+                    response.status_code,
+                    startTime,
+                    f"Couldn't upload to ARC! ERROR: {response.content}",
+                )
+
+            logging.debug("Uploading .gitattributes to repo...")
+            writeLogJson(
+                "uploadFile",
+                201,
+                startTime,
+            )
+            try:
+                responseJson = response.json()
+            except:
+                responseJson = {}
+
+            return responseJson
+
+        # if filename is not inside the .gitattributes, add it
+        elif not name in getResponse.text:
+            content = getResponse.text + "\n" + newLine
+
+            attributeData = {
+                "branch": branch,
+                "content": content,
+                "commit_message": "Update .gitattributes",
+            }
+
+            try:
+                response = requests.put(
+                    postUrl, headers=headers, data=json.dumps(attributeData)
+                )
+            except Exception as e:
+                logging.error(e)
+                writeLogJson("uploadFile", 504, startTime, e)
+
+            if not response.ok and response.status_code != 400:
+                try:
+                    responseJson = response.json()
+                    responseJson["error"] != None
+                except:
+                    responseJson = {
+                        "error": "Couldn't add to .gitattributes",
+                        "error_description": "Couldn't add file to .gitattributes!",
+                    }
+                logging.error(
+                    f"Couldn't add to .gitattributes! ERROR: {response.content}"
+                )
+                writeLogJson(
+                    "uploadFile",
+                    400,
+                    startTime,
+                    f"Couldn't add to .gitattributes! ERROR: {response.content}",
+                )
+
+            elif response.ok:
+                logging.debug("Updating .gitattributes...")
+                writeLogJson(
+                    "uploadFile",
+                    201,
+                    startTime,
+                )
+                try:
+                    responseJson = response.json()
+                except:
+                    responseJson = {}
+
+                return responseJson
+        # if filename already exists, do nothing and just return "File updated"
+        else:
+            writeLogJson(
+                "uploadFile",
+                200,
+                startTime,
+            )
+            return "File updated"
+
+
 # either caches the given byte chunk or uploads the file directly (merges all the byte chunks as soon as all have been received)
 @router.post(
     "/uploadFile",
@@ -193,6 +633,7 @@ def fileChecker(id: int, name: str, totalChunks: int):
 )
 async def uploadFile(
     request: Request,
+    backgroundTasks: BackgroundTasks,
     token: commonToken,
     file: Annotated[bytes, File()],
     name: Annotated[str, Form()],
@@ -223,11 +664,7 @@ async def uploadFile(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Couldn't read request"
         )
 
-    tempFile = tempfile.TemporaryFile(
-        prefix="temp_",
-        dir=os.environ.get("BACKEND_SAVE") + "cache",
-    )
-
+    # write the chunk to disk
     f = open(
         f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunkNumber}",
         "wb",
@@ -255,496 +692,11 @@ async def uploadFile(
                 detail=f"Token expired! Please refresh your session!",
             )
 
-    # open up a new hash
-    shasum = hashlib.new("sha256")
-
-    # if the current chunk is the last chunk, merge all chunks together and write them into the temporary file
+    # if the current chunk is the last chunk, start the upload background process
     if chunkNumber + 1 == totalChunks:
-        fileChecker(id, name, totalChunks)
 
-        for chunk in range(totalChunks):
-            f = open(
-                f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}",
-                "rb",
-            )
-            chunkData = f.read()
-            shasum.update(chunkData)
-            tempFile.write(chunkData)
-
-            f.close()
-
-            # clear the chunk
-            try:
-                os.remove(f"{os.environ.get('BACKEND_SAVE')}cache/{id}-{name}.{chunk}")
-            except:
-                logging.warning(f"Failed to remove chunk {chunk} for file {name}")
-
-        # go to the start of the tempfile
-        tempFile.seek(0)
-
-        ##########################
-        ## START UPLOAD PROCESS ##
-        ##########################
-
-        # the following code is for uploading a file with LFS (code based on ARCfs from Dataplant)
-        if lfs.value == "true":
-            if namespace == "":
-                logging.error(
-                    f"No namespace included for file {name}. Namespace: {namespace}"
-                )
-                raise HTTPException(400, "No Namespace was included!")
-            logging.debug("Uploading file with lfs...")
-
-            # jump to file end and read the size
-            tempFile.seek(0, 2)
-
-            size = tempFile.tell()
-
-            # get the hash string
-            sha256 = shasum.hexdigest()
-
-            # build together the lfs upload json and header
-            lfsJson = {
-                "operation": "upload",
-                "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
-                "transfers": ["lfs-standalone-file", "basic"],
-                "ref": {"name": f"refs/heads/{branch}"},
-                "hash_algo": "sha256",
-            }
-
-            lfsHeaders = {
-                "Accept": "application/vnd.git-lfs+json",
-                "Content-type": "application/vnd.git-lfs+json",
-            }
-
-            headers = {
-                "Authorization": f"Bearer {token['gitlab']}",
-                "Content-Type": "application/json",
-            }
-
-            # construct the download url for the file
-            downloadUrl = f"https://oauth2:{token['gitlab']}@{os.environ.get(target).split('//')[1]}/{namespace}.git/info/lfs/objects/batch"
-
-            x = -1
-
-            # loop the upload process in case there is an 400 error returned after uploading the pointer file
-            # (indicating that the file wasn't properly uploaded to lfs storage in the first place)
-            while x < 3:
-                x += 1
-                # sleep for 10 secs increasing for each retry
-                time.sleep(x * 10)
-                if x > 0:
-                    logging.debug("Retry " + str(x) + " for file: " + name)
-
-                ### Start upload process ###
-
-                # asking gitlab for the lfs address for the file
-                try:
-                    r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
-                except Exception as e:
-                    logging.error(e)
-                    writeLogJson("uploadFile", 504, startTime, e)
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {e}",
-                    )
-
-                if r.status_code == 401:
-                    logging.warning(f"Client cookie not authorized!")
-                    writeLogJson(
-                        "uploadFile",
-                        401,
-                        startTime,
-                        f"Client not authorized to create new ISA!",
-                    )
-                    raise HTTPException(
-                        status_code=HTTP_401_UNAUTHORIZED,
-                        detail="Not authorized to upload a File! Log in again or refresh the session!",
-                    )
-                logging.debug("Uploading file to lfs...")
-                try:
-                    result = r.json()
-                except:
-                    writeLogJson(
-                        "uploadFile",
-                        500,
-                        startTime,
-                        f"Error while uploading the file to lfs storage!",
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Error: There was an error uploading the file. Please re-authorize and try again!",
-                    )
-
-                try:
-                    logging.debug(name + ": " + str(sha256))
-                except:
-                    logging.debug("Result for " + name + ": " + str(r.content))
-
-                # test if there is a change in the file
-                testFail = False
-                try:
-                    test = result["objects"][0]["actions"]
-
-                # if the file is the same, there will be no "actions" attribute and therefore no upload is needed
-                except:
-                    testFail = True
-
-                # if the file is new or includes new content, upload it
-                if not testFail:
-                    # get header data
-                    header_upload = result["objects"][0]["actions"]["upload"]["header"]
-
-                    # get the upload link
-                    urlUpload = result["objects"][0]["actions"]["upload"]["href"]
-                    header_upload.pop("Transfer-Encoding")
-
-                    # start at the beginning of the file
-                    tempFile.seek(0, 0)
-
-                    # upload the full file to lfs
-                    try:
-                        res = session.put(
-                            urlUpload,
-                            headers=header_upload,
-                            data=tempFile,
-                            stream=True,
-                        )
-                    except Exception as e:
-                        logging.error(e)
-                        writeLogJson("uploadFile", 504, startTime, e)
-                        raise HTTPException(
-                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {e}",
-                        )
-
-                    if not res.ok:
-                        try:
-                            responseJson = res.json()
-                            responseJson["error"] != None
-                        except:
-                            responseJson = {
-                                "error": "Couldn't upload file",
-                                "error_description": "Couldn't upload file to the lfs storage!",
-                            }
-                            logging.error(
-                                f"Couldn't upload to ARC! ERROR: {res.content}"
-                            )
-                            writeLogJson(
-                                "uploadFile",
-                                400,
-                                startTime,
-                                f"Couldn't upload to ARC! ERROR: {res.content}",
-                            )
-                            raise HTTPException(
-                                status_code=res.status_code,
-                                detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                            )
-
-                logging.debug("Uploading pointer file to repo...")
-
-                # build and upload the new pointer file to the arc
-                repoPath = quote(path, safe="")
-
-                postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}"
-
-                pointerContent = (
-                    f"version https://git-lfs.github.com/spec/v1\n"
-                    f"oid sha256:{sha256}\nsize {size}\n"
-                )
-
-                jsonData = {
-                    "branch": branch,
-                    "content": pointerContent,
-                    "commit_message": "Create a new lfs pointer file",
-                }
-
-                try:
-                    # check if file already exists
-                    fileHead = session.head(
-                        f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{repoPath}?ref={branch}",
-                        headers=header,
-                    )
-
-                    # if file exists, a put request is needed as the file is being updated
-                    if fileHead.ok:
-                        response = session.put(postUrl, headers=headers, json=jsonData)
-
-                    # if the head request fails, the files does not exist yet and needs to be send via http POST
-                    else:
-                        response = session.post(postUrl, headers=headers, json=jsonData)
-
-                except Exception as e:
-                    logging.error(e)
-                    if fileHead.ok:
-                        response = requests.put(postUrl, headers=headers, json=jsonData)
-                    else:
-                        response = requests.post(
-                            postUrl, headers=headers, json=jsonData
-                        )
-
-                ## if the pointer upload fails, return an error or start again (in case of an 400 error, indicating gitlab being overwhelmed currently)
-                if not response.ok and response.status_code != 400:
-                    try:
-                        responseJson = response.json()
-                        responseJson["error"] != None
-                    except:
-                        responseJson = {
-                            "error": "Couldn't upload file",
-                            "error_description": "Couldn't upload pointer file to the ARC!",
-                        }
-                    logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
-                    writeLogJson(
-                        "uploadFile",
-                        response.status_code,
-                        startTime,
-                        f"Couldn't upload to ARC! ERROR: {response.content}",
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                    )
-
-                else:
-                    # return exception if upload failed after 3 tries
-                    if x >= 2 and response.status_code == 400:
-                        logging.error(
-                            f"File {path} failed to upload after three tries! ERROR: {response.content}"
-                        )
-                        writeLogJson(
-                            "uploadFile",
-                            500,
-                            startTime,
-                            f"Couldn't upload to ARC after three tries! ERROR: {response.content}",
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail=f"File {name} failed to upload after three tries! ERROR: {response.content}",
-                        )
-
-                    # check if response actually was successful, else the loop will start back at the beginning
-                    if response.ok:
-                        # check availability to make sure, the file also was properly uploaded in the lfs
-                        logging.debug("Checking availability for " + name)
-                        lfsJsonDown = {
-                            "operation": "download",
-                            "objects": [{"oid": f"{sha256}", "size": f"{size}"}],
-                            "transfers": ["lfs-standalone-file", "basic"],
-                            "ref": {"name": f"refs/heads/{branch}"},
-                            "hash_algo": "sha256",
-                        }
-
-                        # request the download url for the file from lfs
-                        try:
-                            downloadCheck = session.post(downloadUrl, json=lfsJsonDown)
-                        except Exception as e:
-                            logging.error(e)
-                            writeLogJson("uploadFile", 504, startTime, e)
-                            raise HTTPException(
-                                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                                detail=f"Couldn't check file status! Error: {e}",
-                            )
-                        if downloadCheck.ok:
-                            try:
-                                # get the download url and header for the file
-                                checkResult = downloadCheck.json()
-                                try:
-                                    header_download = checkResult["objects"][0][
-                                        "actions"
-                                    ]["download"]["header"]
-                                except:
-                                    header_download = {
-                                        "Authorization": f"Bearer {token['gitlab']}"
-                                    }
-                                urlDownload = checkResult["objects"][0]["actions"][
-                                    "download"
-                                ]["href"]
-
-                                try:
-                                    # make a simple head request just to see whether the file is existing (we dont need to download it)
-                                    lfsCheck = session.head(
-                                        urlDownload,
-                                        headers=header_download,
-                                    )
-                                except Exception as e:
-                                    logging.error(e)
-                                    writeLogJson("uploadFile", 504, startTime, e)
-                                    raise HTTPException(
-                                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                                        detail=f"Couldn't check file status! Error: {e}",
-                                    )
-
-                                # if file is available, break loop
-                                if lfsCheck.ok:
-                                    logging.debug(f"Upload of file {name} successful")
-                                    x = 3
-
-                                # if file is missing it indicates a failed upload attempt -> go back to the start of the loop
-                                else:
-                                    logging.warning(
-                                        f"File {name} not found in LFS storage, retrying upload process..."
-                                    )
-                            except Exception as e:
-                                logging.error(e)
-
-            ### end of loop ###
-
-            # logging
-            logging.info(
-                f"Uploaded File {name} to repo {id} on path: {path} with LFS. Size: {fileSizeReadable(size)}"
-            )
-
-            ### loop gitattributes ###
-
-            for y in range(5):
-                ## add filename to the gitattributes
-                url = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/.gitattributes/raw?ref={branch}"
-
-                newLine = f"{path} filter=lfs diff=lfs merge=lfs -text\n"
-
-                # get the .gitattributes (for every retry sleep 2 sec in between)
-                try:
-                    if y > 0:
-                        logging.debug("Retrying retrieving .gitattributes...")
-                    time.sleep(y * 2)
-                    getResponse = session.get(url, headers=headers)
-                except Exception as e:
-                    logging.error(e)
-                    writeLogJson("uploadFile", 504, startTime, e)
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't update .gitattributes! Error: {e}",
-                    )
-
-                postUrl = f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote('.gitattributes', safe='')}"
-
-                # if .gitattributes doesn't exist, create a new one
-                if not getResponse.ok:
-                    content = newLine
-
-                    attributeData = {
-                        "branch": branch,
-                        "content": content,
-                        "commit_message": "Create .gitattributes",
-                    }
-
-                    try:
-                        response = requests.post(
-                            postUrl, headers=headers, data=json.dumps(attributeData)
-                        )
-                    except Exception as e:
-                        logging.error(e)
-                        writeLogJson("uploadFile", 504, startTime, e)
-                        raise HTTPException(
-                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {e}",
-                        )
-
-                    if not response.ok:
-                        try:
-                            responseJson = response.json()
-                            responseJson["error"] != None
-                        except:
-                            responseJson = {
-                                "error": "Couldn't create .gitattributes",
-                                "error_description": "Couldn't create .gitattributes file in ARC!",
-                            }
-                        logging.error(
-                            f"Couldn't upload to ARC! ERROR: {response.content}"
-                        )
-                        writeLogJson(
-                            "uploadFile",
-                            response.status_code,
-                            startTime,
-                            f"Couldn't upload to ARC! ERROR: {response.content}",
-                        )
-                        raise HTTPException(
-                            status_code=response.status_code,
-                            detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                        )
-
-                    logging.debug("Uploading .gitattributes to repo...")
-                    writeLogJson(
-                        "uploadFile",
-                        201,
-                        startTime,
-                    )
-                    try:
-                        responseJson = response.json()
-                    except:
-                        responseJson = {}
-
-                    return responseJson
-
-                # if filename is not inside the .gitattributes, add it
-                elif not name in getResponse.text:
-                    content = getResponse.text + "\n" + newLine
-
-                    attributeData = {
-                        "branch": branch,
-                        "content": content,
-                        "commit_message": "Update .gitattributes",
-                    }
-
-                    try:
-                        response = requests.put(
-                            postUrl, headers=headers, data=json.dumps(attributeData)
-                        )
-                    except Exception as e:
-                        logging.error(e)
-                        writeLogJson("uploadFile", 504, startTime, e)
-                        raise HTTPException(
-                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {e}",
-                        )
-
-                    if not response.ok and response.status_code != 400:
-                        try:
-                            responseJson = response.json()
-                            responseJson["error"] != None
-                        except:
-                            responseJson = {
-                                "error": "Couldn't add to .gitattributes",
-                                "error_description": "Couldn't add file to .gitattributes!",
-                            }
-                        logging.error(
-                            f"Couldn't add to .gitattributes! ERROR: {response.content}"
-                        )
-                        writeLogJson(
-                            "uploadFile",
-                            400,
-                            startTime,
-                            f"Couldn't add to .gitattributes! ERROR: {response.content}",
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Couldn't add file to .gitattributes! Error: {responseJson['error']}, {responseJson['error_description']}",
-                        )
-
-                    elif response.ok:
-                        logging.debug("Updating .gitattributes...")
-                        writeLogJson(
-                            "uploadFile",
-                            201,
-                            startTime,
-                        )
-                        try:
-                            responseJson = response.json()
-                        except:
-                            responseJson = {}
-
-                        return responseJson
-                # if filename already exists, do nothing and just return "File updated"
-                else:
-                    writeLogJson(
-                        "uploadFile",
-                        200,
-                        startTime,
-                    )
-                    return "File updated"
-
-        # if its a regular upload without git-lfs
-        else:
+        # its a regular non lfs upload
+        if lfs.value == "false":
             x = -1
             while x < 3:
                 x += 1
@@ -774,7 +726,7 @@ async def uploadFile(
                     payload = {
                         "branch": str(branch),
                         # base64 encoding of the isa file
-                        "content": base64.b64encode(tempFile.read()).decode("utf-8"),
+                        "content": base64.b64encode(file).decode("utf-8"),
                         "commit_message": f"Upload of new File {name}",
                         "encoding": "base64",
                     }
@@ -807,20 +759,18 @@ async def uploadFile(
                             detail=f"Couldn't upload file to repo! Error: {uploadResponse.content}",
                         )
 
-                    statusCode = status.HTTP_201_CREATED
-
                 # if file already exists, update the file
                 else:
                     payload = {
                         "branch": branch,
                         # base64 encoding of the isa file
-                        "content": base64.b64encode(tempFile.read()).decode("utf-8"),
+                        "content": base64.b64encode(file).decode("utf-8"),
                         "commit_message": f"Updating File {name}",
                         "encoding": "base64",
                     }
 
                     try:
-                        # update the file to the gitlab
+                        # update the file on the gitlab
                         uploadResponse = session.put(
                             f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
                             data=json.dumps(payload),
@@ -828,12 +778,7 @@ async def uploadFile(
                         )
                     except Exception as e:
                         logging.error(e)
-                        # update the file to the gitlab
-                        uploadResponse = session.put(
-                            f"{os.environ.get(target)}/api/v4/projects/{id}/repository/files/{quote(path, safe='')}",
-                            data=json.dumps(payload),
-                            headers=header,
-                        )
+
                     if not uploadResponse.ok and uploadResponse.status_code != 400:
                         logging.error(
                             f"Couldn't upload file! ERROR: {uploadResponse.content}"
@@ -848,8 +793,6 @@ async def uploadFile(
                             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                             detail=f"Couldn't upload file to repo! Error: {uploadResponse.content}",
                         )
-
-                    statusCode = status.HTTP_200_OK
 
                 # if file was uploaded, break the loop
                 if uploadResponse.ok:
@@ -875,13 +818,40 @@ async def uploadFile(
             # logging
             logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")
             removeFromGitAttributes(token, id, branch, path)
-            response = Response(uploadResponse.content, statusCode)
+            response = Response(f"File {name} was uploaded successfully!", 201)
             writeLogJson(
                 "uploadFile",
-                statusCode,
+                201,
                 startTime,
             )
             return response
+
+        # check if all chunks are there before starting the upload
+        fileChecker(id, name, totalChunks)
+
+        if namespace == "":
+            logging.error(
+                f"No namespace included for file {name}. Namespace: {namespace}"
+            )
+            raise HTTPException(400, "No Namespace was included!")
+
+        # else start the lfs upload
+        backgroundTasks.add_task(
+            lfsUploader,
+            token,
+            name,
+            id,
+            path,
+            startTime,
+            branch,
+            namespace,
+            totalChunks,
+        )
+
+        return Response(
+            content=f"File {name} is now uploaded in the background! Check again later!",
+            status_code=200,
+        )
 
     # log the current progress and return the confirmation
     else:

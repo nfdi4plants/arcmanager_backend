@@ -55,11 +55,11 @@ oauth.register(
     client_kwargs={"scope": "openid api profile"},
 )
 
-# backend_address = "http://localhost:8000/arcmanager/api/v1/auth/"
-backend_address = "https://nfdi4plants.de/arcmanager/api/v1/auth/"
+backend_address = "http://localhost:8000/arcmanager/api/v1/auth/"
+# backend_address = "https://nfdi4plants.de/arcmanager/api/v1/auth/"
 
-# redirect = "http://localhost:5173"
-redirect = "https://nfdi4plants.de/arcmanager/app/index.html"
+redirect = "http://localhost:5173"
+# redirect = "https://nfdi4plants.de/arcmanager/app/index.html"
 
 
 def encryptToken(content: bytes) -> bytes:
