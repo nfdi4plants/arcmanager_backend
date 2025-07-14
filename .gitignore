@@ -167,13 +167,11 @@ cython_debug/
 # Databases
 *.db
 
-# excel files
-*.xlsx
-
-
 # Production deployment documentation
 
 deployment.md
 *.txt
 log*
 *.json
+
+.DS_Store
