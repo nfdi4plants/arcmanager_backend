@@ -7,7 +7,8 @@ import urllib
 from abc import ABC, abstractmethod
 from enum import Enum
 from io import BytesIO
-from typing import Annotated, Any, override
+from typing import Annotated, Any
+from typing_extensions import override
 
 from fastapi import Depends
 import pandas as pd
