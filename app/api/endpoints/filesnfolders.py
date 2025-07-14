@@ -548,9 +548,14 @@ async def uploadFile(
                             try:
                                 # get the download url and header for the file
                                 checkResult = downloadCheck.json()
-                                header_download = checkResult["objects"][0]["actions"][
-                                    "download"
-                                ]["header"]
+                                try:
+                                    header_download = checkResult["objects"][0][
+                                        "actions"
+                                    ]["download"]["header"]
+                                except:
+                                    header_download = {
+                                        "Authorization": f"Bearer {token['gitlab']}"
+                                    }
                                 urlDownload = checkResult["objects"][0]["actions"][
                                     "download"
                                 ]["href"]
@@ -664,12 +669,8 @@ async def uploadFile(
                         201,
                         startTime,
                     )
-                    try:
-                        responseJson = response.json()
-                    except:
-                        responseJson = {}
 
-                    return responseJson
+                    return f"File {name} was uploaded successfully!"
 
                 # if filename is not inside the .gitattributes, add it
                 elif not name in getResponse.text:
@@ -723,12 +724,8 @@ async def uploadFile(
                             201,
                             startTime,
                         )
-                        try:
-                            responseJson = response.json()
-                        except:
-                            responseJson = {}
 
-                        return responseJson
+                        return f"File {name} was uploaded successfully!"
                 # if filename already exists, do nothing and just return "File updated"
                 else:
                     writeLogJson(
@@ -736,7 +733,7 @@ async def uploadFile(
                         200,
                         startTime,
                     )
-                    return "File updated"
+                    return f"File {name} was updated"
 
         # if its a regular upload without git-lfs
         else:
@@ -870,7 +867,7 @@ async def uploadFile(
             # logging
             logging.info(f"Uploaded new File {name} to repo {id} on path: {path}")
             removeFromGitAttributes(token, id, branch, path)
-            response = Response(uploadResponse.content, statusCode)
+            response = Response(f"Uploaded new File {name}", statusCode)
             writeLogJson(
                 "uploadFile",
                 statusCode,

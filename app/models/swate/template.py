@@ -40,7 +40,7 @@ class Author(BaseModel):
 
 
 class Tag(BaseModel):
-    annotationValue: str
+    annotationValue: str = ""
     termSource: Optional[str] = None
     termAccession: Optional[str] = None
 
@@ -52,7 +52,7 @@ class Template(BaseModel):
     description: str = Field(examples=["Template to describe the extraction of RNA."])
     organisation: str = Field(examples=["DataPLANT"])
     version: str = Field(examples=["1.2.0"])
-    authors: List[Author]
+    authors: Optional[List[Author]]
     endpoint_repositories: Optional[List]
     tags: Optional[List[Tag]]
     last_updated: str = Field(examples=["2024-02-02T23:38:44.0000000"])
