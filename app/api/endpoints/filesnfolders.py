@@ -346,7 +346,7 @@ async def uploadFile(
 
                 except Exception as e:
                     logging.error(e)
-
+                    r = requests.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
                     if r.status_code not in forceList:
                         writeLogJson("uploadFile", 504, startTime, e)
                         raise HTTPException(
@@ -417,6 +417,12 @@ async def uploadFile(
                         )
                     except Exception as e:
                         logging.error(e)
+                        res = requests.put(
+                            urlUpload,
+                            headers=header_upload,
+                            data=tempFile,
+                            stream=True,
+                        )
                         if res.status_code not in forceList:
                             writeLogJson("uploadFile", 504, startTime, e)
                             raise HTTPException(
