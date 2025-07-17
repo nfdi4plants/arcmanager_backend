@@ -39,11 +39,13 @@ from dotenv import load_dotenv
 
 from starlette.status import HTTP_401_UNAUTHORIZED
 
+forceList = [500, 502, 429, 503, 504, 400]
+
 # request sessions to retry the important requests
 retry = Retry(
     total=3,
     backoff_factor=5,
-    status_forcelist=[500, 502, 429, 503, 504, 400],
+    status_forcelist=forceList,
     allowed_methods=["POST", "PUT", "HEAD"],
 )
 
@@ -341,13 +343,16 @@ async def uploadFile(
                 # asking gitlab for the lfs address for the file
                 try:
                     r = session.post(downloadUrl, json=lfsJson, headers=lfsHeaders)
+
                 except Exception as e:
                     logging.error(e)
-                    writeLogJson("uploadFile", 504, startTime, e)
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=f"Couldn't upload file to repo! Error: {e}",
-                    )
+
+                    if r.status_code not in forceList:
+                        writeLogJson("uploadFile", 504, startTime, e)
+                        raise HTTPException(
+                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                            detail=f"Couldn't upload file to repo! Error: {e}",
+                        )
 
                 if r.status_code == 401:
                     logging.warning(f"Client cookie not authorized!")
@@ -412,11 +417,12 @@ async def uploadFile(
                         )
                     except Exception as e:
                         logging.error(e)
-                        writeLogJson("uploadFile", 504, startTime, e)
-                        raise HTTPException(
-                            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                            detail=f"Couldn't upload file to repo! Error: {e}",
-                        )
+                        if res.status_code not in forceList:
+                            writeLogJson("uploadFile", 504, startTime, e)
+                            raise HTTPException(
+                                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                                detail=f"Couldn't upload file to repo! Error: {e}",
+                            )
 
                     if not res.ok:
                         try:
@@ -494,16 +500,18 @@ async def uploadFile(
                             "error_description": "Couldn't upload pointer file to the ARC!",
                         }
                     logging.error(f"Couldn't upload to ARC! ERROR: {response.content}")
-                    writeLogJson(
-                        "uploadFile",
-                        response.status_code,
-                        startTime,
-                        f"Couldn't upload to ARC! ERROR: {response.content}",
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
-                    )
+
+                    if response.status_code not in forceList:
+                        writeLogJson(
+                            "uploadFile",
+                            response.status_code,
+                            startTime,
+                            f"Couldn't upload to ARC! ERROR: {response.content}",
+                        )
+                        raise HTTPException(
+                            status_code=response.status_code,
+                            detail=f"Couldn't upload file to repo! Error: {responseJson['error']}, {responseJson['error_description']}",
+                        )
 
                 else:
                     # return exception if upload failed after 3 tries
