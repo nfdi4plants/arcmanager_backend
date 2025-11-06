@@ -29,7 +29,7 @@ class Value1(BaseModel):
 
 class Table(BaseModel):
     name: str
-    header: List[HeaderItem]
+    headers: List[HeaderItem]
     values: Optional[List[List[Union[List[int], Value1]]]] = []
 
 
