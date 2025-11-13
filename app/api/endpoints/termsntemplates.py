@@ -107,7 +107,7 @@ async def getTemplates() -> Templates:
             pass
 
         for index, entry in enumerate(templateList):
-            if "headers" not in entry["table"].keys():
+            if "header" not in entry["table"].keys():
                 templateList.pop(index)
 
     logging.info("Sent list of swate templates to client!")
