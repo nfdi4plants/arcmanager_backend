@@ -1817,7 +1817,7 @@ async def createIsa(request: Request, isaContent: newIsa, token: commonToken):
             writeIsaFile(
                 path=pathName,
                 type="assay",
-                newContent=["Assay Measurement Type", identifier],
+                newContent=["Assay Identifier", identifier],
                 repoId=id,
                 location=token["target"],
             )
