@@ -10,6 +10,8 @@ from fastapi import (
 )
 import requests
 
+from datetime import date
+
 from app.api.IO.excelIO import readIsaFile
 from app.api.endpoints.projects import getTarget, public_arcs
 from app.models.gitlab.projects import Projects, Project
@@ -201,6 +203,9 @@ async def createArcJson():
                 return entry
 
     data: list[Projects] = []
+
+    currentDate = date.today()
+    currentYear = currentDate.year
     for datahub in ["freiburg", "plantmicrobe", "tuebingen"]:
 
         projects = await public_arcs(datahub)
@@ -216,7 +221,7 @@ async def createArcJson():
         for i, arc in enumerate(data):
             # if the last activity was in 2025, we update the data
             # everything older is not updated and uses the old data (this saves time)
-            if arc.last_activity_at.startswith("2025"):
+            if arc.last_activity_at.startswith(str(currentYear)):
 
                 investData = await getInvestData(arc.id, datahub, arc.default_branch)
 
