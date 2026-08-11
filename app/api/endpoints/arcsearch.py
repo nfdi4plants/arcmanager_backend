@@ -253,6 +253,7 @@ async def createArcJson():
                 if oldArcData is not None:
                     fullProjects.append(oldArcData)
                 else:
+                    investData = await getInvestData(arc.id, datahub, arc.default_branch)
                     fullProjects.append(
                         {
                             "datahub": datahub,

@@ -950,8 +950,6 @@ async def arc_file(
             try:
                 images = convert_from_bytes(
                     decoded,
-                    # remove for linux
-                    poppler_path=os.environ.get("BACKEND_SAVE") + "poppler/bin",
                 )
             except:
                 writeLogJson(
