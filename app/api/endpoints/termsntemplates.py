@@ -183,7 +183,7 @@ async def getTerms(
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
         request = requests.post(
-            "https://swate-alpha.nfdi4plants.org/api/IOntologyAPIv3/searchTerm",
+            "https://swate.nfdi4plants.org/api/IOntologyAPIv3/searchTerm",
             data=json.dumps(
                 [
                     {
