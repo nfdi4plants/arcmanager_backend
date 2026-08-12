@@ -182,18 +182,21 @@ async def getTerms(
     startTime = time.time()
     # the following requests will timeout after 7s (10s for extended), because swate could otherwise freeze the backend by not returning any answer
     try:
-        request = requests.post(
-            "https://swate.nfdi4plants.org/api/IOntologyAPIv3/searchTerm",
-            data=json.dumps(
-                [
-                    {
-                        "limit": 50,
-                        "query": input,
-                    }
-                ]
-            ),
-            timeout=10,
-        )
+        headers = {
+            "accept": "application/json",
+            "Content-Type": "application/json"
+        }
+
+        data = [
+            {
+                "limit": 10,
+                "query": input
+            }
+        ]
+
+        url = "https://swate.nfdi4plants.org/api/IOntologyAPIv3/searchTerm"
+
+        request = requests.post(url, json=data, headers=headers)
         logging.debug(f"Getting a list of terms for the input '{input}'!")
 
         try:
