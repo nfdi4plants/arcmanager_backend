@@ -196,7 +196,7 @@ async def getTerms(
 
         url = "https://swate.nfdi4plants.org/api/IOntologyAPIv3/searchTerm"
 
-        request = requests.post(url, json=data, headers=headers)
+        request = requests.post(url, json=data, headers=headers, timeout=10)
         logging.debug(f"Getting a list of terms for the input '{input}'!")
 
         try:
